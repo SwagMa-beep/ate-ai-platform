@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-headline: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-surface: #060e20;
+  --color-surface-container: #0f1930;
+  --color-surface-container-low: #091328;
+  --color-surface-container-high: #141f38;
+  --color-surface-container-highest: #192540;
+  --color-surface-bright: #1f2b49;
+
+  --color-primary: #53ddfc;
+  --color-primary-container: #004b58;
+  --color-on-primary: #00343e;
+  
+  --color-secondary: #699cff;
+  --color-secondary-container: #003271;
+  
+  --color-tertiary: #ffb148;
+  --color-tertiary-container: #4a2c00;
+  
+  --color-on-surface: #dee5ff;
+  --color-on-surface-variant: #a3aac4;
+  
+  --color-outline: #6d758c;
+  --color-outline-variant: #40485d;
+}
+
+@layer base {
+  body {
+    @apply bg-surface text-on-surface antialiased selection:bg-primary/30;
+  }
+}
+
+.glass-panel {
+  @apply bg-surface-container/60 backdrop-blur-md border border-outline-variant/20;
+}
+
+.hero-glow {
+  background: radial-gradient(circle at 0% 0%, rgba(83, 221, 252, 0.15) 0%, transparent 50%);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-outline-variant/40 rounded-full;
+}
+
+.pulse-dot {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.5); opacity: 0.5; }
+  100% { transform: scale(1); opacity: 1; }
+}
