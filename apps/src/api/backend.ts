@@ -3,7 +3,65 @@
  * 封装所有与 FastAPI 后端的通信
  */
 
-const BASE_URL = '/api/v1';
+function readStoredApiOrigin(storage: Pick<Storage, 'getItem'> | undefined): string {
+  try {
+    return storage?.getItem('ate_api_origin') || '';
+  } catch {
+    return '';
+  }
+}
+
+function persistApiOrigin(apiOrigin: string) {
+  if (!apiOrigin || typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem('ate_api_origin', apiOrigin);
+  } catch {
+    // ignore storage failures
+  }
+  try {
+    window.localStorage.setItem('ate_api_origin', apiOrigin);
+  } catch {
+    // ignore storage failures
+  }
+}
+
+export function getApiOrigin(): string {
+  const envOrigin = (import.meta.env.VITE_API_ORIGIN || '').replace(/\/$/, '');
+  if (envOrigin) return envOrigin;
+
+  if (typeof window === 'undefined') return '';
+
+  const fromQuery = new URLSearchParams(window.location.search).get('apiOrigin')?.replace(/\/$/, '') || '';
+  if (fromQuery) {
+    persistApiOrigin(fromQuery);
+    return fromQuery;
+  }
+
+  const fromSession = readStoredApiOrigin(window.sessionStorage).replace(/\/$/, '');
+  if (fromSession) return fromSession;
+
+  const fromLocal = readStoredApiOrigin(window.localStorage).replace(/\/$/, '');
+  if (fromLocal) return fromLocal;
+
+  if (window.location.protocol === 'file:') return 'http://127.0.0.1:18080';
+  return '';
+}
+
+function getBaseUrl(): string {
+  return `${getApiOrigin()}/api/v1`;
+}
+
+export function resolveBackendUrl(url: string): string {
+  const apiOrigin = getApiOrigin();
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith('//')) {
+    const protocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+    return `${protocol}${url}`;
+  }
+  if (url.startsWith('/')) return `${apiOrigin}${url}`;
+  return `${apiOrigin}/${url.replace(/^\.?\//, '')}`;
+}
 
 // ─── 通用响应类型 ─────────────────────────────────────────────
 export interface ApiResponse<T> {
@@ -133,7 +191,7 @@ async function request<T>(
 
 // ─── 健康检查 ─────────────────────────────────────────────────
 export async function checkHealth(): Promise<ApiResponse<HealthResult>> {
-  return request<HealthResult>('/health');
+  return request<HealthResult>(`${getApiOrigin()}/health`);
 }
 
 // ─── TestPlan API ─────────────────────────────────────────────
@@ -142,7 +200,7 @@ export async function checkHealth(): Promise<ApiResponse<HealthResult>> {
 export async function uploadPDF(file: File): Promise<ApiResponse<UploadResult>> {
   const formData = new FormData();
   formData.append('file', file);
-  return request<UploadResult>(`${BASE_URL}/testplan/upload`, {
+  return request<UploadResult>(`${getBaseUrl()}/testplan/upload`, {
     method: 'POST',
     body: formData,
   });
@@ -156,7 +214,7 @@ export async function extractTestplan(
   const params = new URLSearchParams({ file_id: fileId });
   if (options.pages) params.append('pages', options.pages);
   if (options.maxWorkers) params.append('max_workers', String(options.maxWorkers));
-  return request<ExtractionResult>(`${BASE_URL}/testplan/extract?${params}`, {
+  return request<ExtractionResult>(`${getBaseUrl()}/testplan/extract?${params}`, {
     method: 'POST',
   });
 }
@@ -179,30 +237,30 @@ export async function extractTestplanAsync(
   const params = new URLSearchParams({ file_id: fileId });
   if (options.pages) params.append('pages', options.pages);
   if (options.maxWorkers) params.append('max_workers', String(options.maxWorkers));
-  return request(`${BASE_URL}/testplan/extract-async?${params}`, {
+  return request(`${getBaseUrl()}/testplan/extract-async?${params}`, {
     method: 'POST',
   });
 }
 
 /** 查询任务状态 */
 export async function getTaskStatus(taskId: string): Promise<ApiResponse<TaskStatusResult>> {
-  return request<TaskStatusResult>(`${BASE_URL}/testplan/status/${taskId}`);
+  return request<TaskStatusResult>(`${getBaseUrl()}/testplan/status/${taskId}`);
 }
 
 /** 获取引脚定义 */
 export async function getPinDefinitions(fileId: string): Promise<ApiResponse<PinsResult>> {
-  return request<PinsResult>(`${BASE_URL}/testplan/pins/${fileId}`);
+  return request<PinsResult>(`${getBaseUrl()}/testplan/pins/${fileId}`);
 }
 
 /** 获取文件列表 */
 export async function listFiles(page = 1, pageSize = 10): Promise<ApiResponse<{ items: FileListItem[]; total: number }>> {
   const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-  return request(`${BASE_URL}/testplan/list?${params}`);
+  return request(`${getBaseUrl()}/testplan/list?${params}`);
 }
 
 /** 获取下载链接（通过代理） */
 export function getDownloadUrl(fileId: string, type: 'excel' | 'json'): string {
-  return `${BASE_URL}/testplan/download/${fileId}/${type}`;
+  return `${getBaseUrl()}/testplan/download/${fileId}/${type}`;
 }
 
 // ─── 资源映射 API ─────────────────────────────────────────────
@@ -215,7 +273,7 @@ export async function generateResourceMap(
   const formData = new FormData();
   formData.append('file_id', fileId);
   formData.append('dual_site', String(dualSite));
-  const response = await fetch(`${BASE_URL}/resource-map/generate`, {
+  const response = await fetch(`${getBaseUrl()}/resource-map/generate`, {
     method: 'POST',
     body: formData,
   });
@@ -278,7 +336,7 @@ export interface TemplatesResult {
 
 /** 生成 STS8200S 测试代码 */
 export async function generateCode(req: CodegenRequest): Promise<ApiResponse<CodegenResult>> {
-  return request<CodegenResult>(`${BASE_URL}/codegen/generate`, {
+  return request<CodegenResult>(`${getBaseUrl()}/codegen/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -287,7 +345,7 @@ export async function generateCode(req: CodegenRequest): Promise<ApiResponse<Cod
 
 /** 获取支持的测试项模板列表 */
 export async function getCodeTemplates(): Promise<ApiResponse<TemplatesResult>> {
-  return request<TemplatesResult>(`${BASE_URL}/codegen/templates`);
+  return request<TemplatesResult>(`${getBaseUrl()}/codegen/templates`);
 }
 
 // ─── RAG 相关类型 ──────────────────────────────────────────────
@@ -301,12 +359,12 @@ export interface RagStatus {
 
 /** 获取 RAG 索引状态 */
 export async function getRagStatus(): Promise<ApiResponse<RagStatus>> {
-  return request<RagStatus>(`${BASE_URL}/rag/status`);
+  return request<RagStatus>(`${getBaseUrl()}/rag/status`);
 }
 
 /** 构建 RAG 内置知识库 */
 export async function buildRagIndex(pdfPath?: string): Promise<ApiResponse<RagStatus>> {
-  return request<RagStatus>(`${BASE_URL}/rag/build`, {
+  return request<RagStatus>(`${getBaseUrl()}/rag/build`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ pdf_path: pdfPath || null }),
@@ -353,7 +411,7 @@ export interface DiagnosisRequest {
 
 /** 运行 ML 良率诊断 */
 export async function runDiagnosis(req?: DiagnosisRequest): Promise<ApiResponse<DiagnosisResult>> {
-  return request<DiagnosisResult>(`${BASE_URL}/diagnosis/run`, {
+  return request<DiagnosisResult>(`${getBaseUrl()}/diagnosis/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req || {}),
@@ -363,5 +421,5 @@ export async function runDiagnosis(req?: DiagnosisRequest): Promise<ApiResponse<
 /** 获取实时波形数据 */
 export async function getWaveform(nPoints?: number): Promise<ApiResponse<{waveform: WaveformPoint[]; yield_rate: number; anomaly_ratio: number}>> {
   const qs = nPoints ? `?n_points=${nPoints}` : '';
-  return request(`${BASE_URL}/diagnosis/waveform${qs}`);
+  return request(`${getBaseUrl()}/diagnosis/waveform${qs}`);
 }

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from functools import lru_cache
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 
 # 获取项目根目录
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
@@ -57,6 +58,21 @@ class Settings(BaseSettings):
         env_file = str(BASE_DIR / "backend" / ".env")
         env_file_encoding = "utf-8"
         case_sensitive = True
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def normalize_debug_value(cls, value):
+        """Accept non-boolean debug-like env values (e.g. DEBUG=release)."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return True
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on", "debug", "dev", "development"}:
+            return True
+        if text in {"0", "false", "no", "off", "release", "prod", "production"}:
+            return False
+        return False
 
     def create_dirs(self):
         """创建必要的目录"""

@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Tuple
 import traceback
 import os
+import json
+import re
 
 from app.models.testplan import (
     TestPlan, DCParam, PinDefinition,
@@ -66,33 +68,103 @@ class LLMExtractor:
             timeout=120.0,
             max_retries=3,
         )
-        self.client = instructor.from_openai(
-            OpenAI(
-                api_key=settings.DEEPSEEK_API_KEY,
-                base_url=settings.DEEPSEEK_BASE_URL,
-                http_client=httpx.Client(
-                    timeout=httpx.Timeout(
-                        connect=30.0,
-                        read=120.0,
-                        write=30.0,
-                        pool=30.0
-                    ),
-                    limits=httpx.Limits(
-                        max_connections=20,
-                        max_keepalive_connections=10,
-                        keepalive_expiry=30.0
-                    ),
-                    verify=False
+        instructor_base_client = OpenAI(
+            api_key=settings.DEEPSEEK_API_KEY,
+            base_url=settings.DEEPSEEK_BASE_URL,
+            http_client=httpx.Client(
+                timeout=httpx.Timeout(
+                    connect=30.0,
+                    read=120.0,
+                    write=30.0,
+                    pool=30.0
                 ),
-                timeout=120.0,
-                max_retries=3,
-            )
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                    keepalive_expiry=30.0
+                ),
+                verify=False
+            ),
+            timeout=120.0,
+            max_retries=3,
         )
+        # Support both old and new instructor APIs.
+        if hasattr(instructor, "from_openai"):
+            self.client = instructor.from_openai(instructor_base_client)
+        elif hasattr(instructor, "patch"):
+            self.client = instructor.patch(instructor_base_client)
+        else:
+            raise RuntimeError(
+                "Unsupported instructor package version. "
+                "Please install a compatible instructor release."
+            )
 
         logger.info(
             f"LLM Client initialized: {settings.DEEPSEEK_MODEL} | "
             f"Key: {settings.DEEPSEEK_API_KEY[:8]}..."
         )
+
+    @staticmethod
+    def _extract_json_text(content: str) -> str:
+        """Best-effort extraction for JSON returned with markdown fences or extra prose."""
+        text = (content or "").strip()
+        fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+        if fenced:
+            return fenced.group(1).strip()
+
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return text[start:end + 1]
+        return text
+
+    def _create_structured_plan(self, prompt: str) -> TestPlan:
+        """Use plain chat completion + JSON parsing to avoid instructor/function-call incompatibility."""
+        schema = json.dumps(TestPlan.model_json_schema(), ensure_ascii=False)
+        completion = self.raw_client.chat.completions.create(
+            model=settings.DEEPSEEK_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Return only a valid JSON object. "
+                        "Do not include markdown fences, explanations, or extra text."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"{prompt}\n\n"
+                        "You must respond with one JSON object matching this schema:\n"
+                        f"{schema}"
+                    ),
+                },
+            ],
+            temperature=settings.TEMPERATURE,
+            max_tokens=settings.MAX_TOKENS,
+            response_format={"type": "json_object"},
+        )
+        content = completion.choices[0].message.content or "{}"
+        json_text = self._extract_json_text(content)
+        payload = json.loads(json_text)
+
+        # LLMs sometimes emit null for string fields that are modeled as str.
+        for param in payload.get("dc_params", []) or []:
+            if param.get("condition") is None:
+                param["condition"] = ""
+            if param.get("unit") is None:
+                param["unit"] = ""
+            if param.get("param_name") is None:
+                param["param_name"] = ""
+        for pin in payload.get("pin_definitions", []) or []:
+            if pin.get("function") is None:
+                pin["function"] = ""
+            if pin.get("notes") is None:
+                pin["notes"] = ""
+            if pin.get("pin_name") is None:
+                pin["pin_name"] = ""
+
+        return TestPlan.model_validate(payload)
 
     # ----------------------------------------------------------
     # 公共方法
@@ -140,14 +212,12 @@ class LLMExtractor:
     可选值：DIGITAL_74 / DIGITAL_54 / DIGITAL_4000 / MEMORY / LDO / EEPROM / ANALOG_GENERAL / UNKNOWN"""
 
         try:
-            resp = self.client.chat.completions.create(
+            resp = self.raw_client.chat.completions.create(
                 model=settings.DEEPSEEK_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                response_model=None,
-                max_retries=3,
-                temperature=0
+                temperature=0,
             )
-            chip_type = resp.choices[0].message.content.strip().upper()
+            chip_type = (resp.choices[0].message.content or "").strip().upper()
 
             # ✅ 清理多余字符（AI有时会返回带引号/换行/空格的内容）
             chip_type = (
@@ -206,17 +276,11 @@ class LLMExtractor:
             prompt = self._build_general_prompt(chunk)
 
         try:
-            resp = self.client.chat.completions.create(
-                model=settings.DEEPSEEK_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                response_model=TestPlan,
-                max_retries=2,
-                temperature=settings.TEMPERATURE,
-                max_tokens=settings.MAX_TOKENS
-            )
+            resp = self._create_structured_plan(prompt)
 
             for param in resp.dc_params:
-                param.page = chunk["page"]
+                if isinstance(chunk["page"], int):
+                    param.page = chunk["page"]
                 if chip_type in {
                     "DIGITAL_74", "DIGITAL_54", "DIGITAL_4000"
                 }:

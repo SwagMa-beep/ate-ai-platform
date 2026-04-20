@@ -4,7 +4,11 @@ import {
   Loader2, AlertTriangle, CheckCircle2, RefreshCw, Info,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { generateResourceMap, type ResourceMapResult } from '../api/backend';
+import {
+  generateResourceMap,
+  resolveBackendUrl,
+  type ResourceMapResult,
+} from '../api/backend';
 
 /**
  * 直接触发浏览器下载，不经过 fetch
@@ -73,7 +77,15 @@ export function Resources() {
     try {
       const res = await generateResourceMap(id, dualSite);
       if (res.status === 'success' && res.data) {
-        const svgUrl = res.data.download.schematic_svg;
+        const svgUrl = resolveBackendUrl(res.data.download.schematic_svg);
+        const normalizedResult: ResourceMapResult = {
+          ...res.data,
+          download: {
+            resource_map_excel: resolveBackendUrl(res.data.download.resource_map_excel),
+            schematic_svg: svgUrl,
+            bom_excel: resolveBackendUrl(res.data.download.bom_excel),
+          },
+        };
         // 预加载 SVG 文本内容用于内嵌预览
         let svgContent = '';
         try {
@@ -82,7 +94,7 @@ export function Resources() {
         } catch {
           // SVG 预览失败不影响主功能
         }
-        update({ stage: 'done', result: res.data, svgUrl, svgContent });
+        update({ stage: 'done', result: normalizedResult, svgUrl, svgContent });
       } else {
         update({ stage: 'error', error: res.message || '生成失败' });
       }

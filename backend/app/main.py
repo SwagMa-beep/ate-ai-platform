@@ -15,6 +15,9 @@ from app.utils.logger import setup_logger
 settings = get_settings()
 logger = setup_logger()
 
+# Ensure data directories exist before static mounts are evaluated.
+settings.create_dirs()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -194,14 +197,11 @@ app.include_router(
 )
 
 # ── 静态文件 ──────────────────────────────────────────────────
-try:
-    app.mount(
-        "/files",
-        StaticFiles(directory=str(settings.PROCESSED_DIR)),
-        name="files"
-    )
-except Exception as e:
-    logger.warning(f"WARN: Static file service mount failed: {e}")
+app.mount(
+    "/files",
+    StaticFiles(directory=str(settings.PROCESSED_DIR)),
+    name="files"
+)
 
 
 # ── 系统接口 ──────────────────────────────────────────────────
