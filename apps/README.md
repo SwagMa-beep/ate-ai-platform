@@ -1,20 +1,35 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# ATE AI Platform Frontend
 
-# Run and deploy your AI Studio app
+React + Vite + Electron frontend for ATE-AI-Platform.
 
-This contains everything you need to run your app locally.
+## Prerequisites
 
-View your app in AI Studio: https://ai.studio/apps/b31a90f5-8a02-46e6-879d-57769c535c38
+- Node.js 20+
+- Backend service running at `http://localhost:8000`
 
-## Run Locally
+## Run Web App
 
-**Prerequisites:**  Node.js
+```powershell
+npm install
+npm run dev
+```
 
+The Vite dev server runs at `http://localhost:3000` and proxies API requests to the FastAPI backend.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Build Web App
+
+```powershell
+npm run build
+```
+
+## Run Desktop App
+
+```powershell
+npm run desktop:dev
+```
+
+## Build Desktop Package
+
+```powershell
+npm run desktop:build
+```

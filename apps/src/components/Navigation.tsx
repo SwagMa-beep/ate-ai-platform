@@ -28,7 +28,7 @@ export function TopNav({ currentView, onViewChange }: NavProps) {
             <Radio className="w-6 h-6 text-primary" />
           </motion.div>
         </div>
-        <span className="text-xl font-headline font-bold tracking-widest text-primary uppercase">ATE Agent Pro</span>
+        <span className="text-xl font-headline font-bold tracking-widest text-primary uppercase">ATE AI Platform</span>
       </div>
 
       <nav className="hidden md:flex items-center gap-2">

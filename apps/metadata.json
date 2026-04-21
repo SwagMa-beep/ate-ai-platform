@@ -1,0 +1,6 @@
+{
+  "name": "ATE AI Platform",
+  "description": "AI-assisted Automatic Test Equipment platform for datasheet extraction, test planning, resource mapping, code generation, and yield diagnosis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

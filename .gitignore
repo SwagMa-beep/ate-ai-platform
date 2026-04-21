@@ -48,6 +48,10 @@ data/processed/*
 !data/processed/.gitkeep
 *.xlsx
 *.json
+!apps/package.json
+!apps/package-lock.json
+!apps/metadata.json
+!apps/tsconfig.json
 
 # 系统文件
 .DS_Store

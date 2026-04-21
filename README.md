@@ -250,9 +250,14 @@ python cli.py --pdf ../data/raw/Renesas-HD74LS00P.pdf --workers 3
 6. 选择芯片类型、测试项和引脚分组，生成 STS8200S C++ 测试程序。
 7. 在良率诊断页面运行仿真诊断，查看异常事件和趋势预测。
 
+完整演示流程见 `docs/demo-workflow.md`。
+
 ## 验证命令
 
 ```powershell
+# 后端单元测试
+python -m pytest backend/tests -q
+
 # 后端语法检查
 python -m compileall -q backend/app
 

@@ -2,9 +2,16 @@
 API测试
 测试HTTP接口
 """
+import os
 import requests
 import time
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_INTEGRATION_TESTS") != "1",
+    reason="integration workflow requires a running backend service and sample PDF files",
+)
 
 API_BASE = "http://localhost:8000/api/v1/testplan"
 
