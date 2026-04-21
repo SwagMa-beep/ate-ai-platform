@@ -261,18 +261,6 @@ cd apps
 npm run build
 ```
 
-## 简历描述参考
-
-可以将本项目描述为：
-
-> 面向 ATE 测试开发的 AI 辅助平台：基于 FastAPI + React/Electron，实现 Datasheet 参数抽取、TestPlan Excel 自动生成、STS8200S 资源映射、RAG 增强测试代码生成与良率异常诊断。
-
-项目职责示例：
-
-- 设计并实现 FastAPI 后端服务，封装 PDF 解析、LLM 参数抽取、数据校验、Excel 导出和异步任务接口。
-- 实现 STS8200S 测试代码生成模块，结合规则模板、RAG 检索和静态校验生成可复核的 C++ 测试程序。
-- 使用 React + Vite + Electron 构建桌面端交互界面，打通 PDF 上传、任务状态、结果下载、资源映射和代码生成流程。
-- 构建良率诊断演示模块，使用 IsolationForest 对仿真 VI 波形进行异常检测，并输出故障类型和良率趋势。
 
 ## 注意事项
 
