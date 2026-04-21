@@ -159,7 +159,7 @@ const ProgressView = ({ progress, message, fileInfo, stage }: ProgressViewProps)
     </div>
 
     <p className="text-xs text-on-surface-variant/60 font-mono uppercase tracking-widest">
-      {stage === 'uploading' ? '上传中...' : '正在调用 DeepSeek API，大文件可能需要数分钟'}
+      {stage === 'uploading' ? '上传中...' : '正在解析 Datasheet，命中缓存会秒级返回'}
     </p>
   </motion.div>
 );
@@ -524,5 +524,4 @@ export function Extractor() {
     </div>
   );
 }
-
 

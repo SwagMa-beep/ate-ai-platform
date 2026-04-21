@@ -12,6 +12,7 @@ import traceback
 import os
 import json
 import re
+import time
 
 from app.models.testplan import (
     TestPlan, DCParam, PinDefinition,
@@ -24,6 +25,53 @@ from app.utils.logger import setup_logger
 
 settings = get_settings()
 logger = setup_logger()
+
+CHIP_DETECT_MAX_TOKENS = 32
+EXTRACTION_MAX_TOKENS = min(settings.MAX_TOKENS, 5000)
+LLM_READ_TIMEOUT_SECONDS = 90.0
+LLM_MAX_RETRIES = 1
+VALID_CHIP_TYPES = {
+    "DIGITAL_74", "DIGITAL_54", "DIGITAL_4000",
+    "MEMORY", "LDO", "EEPROM", "ANALOG_GENERAL", "UNKNOWN",
+}
+VALID_TEST_SCENARIOS = {"DIGITAL_DC", "DIGITAL_AC", "LDO", "EEPROM", "GENERAL"}
+VALID_PIN_DIRECTIONS = {"IN", "OUT", "PWR", "GND", "BIDIR", "NC"}
+NUMERIC_FIELDS = {
+    "min_val", "typ_val", "max_val",
+    "voltage_max", "current_max",
+    "confidence",
+}
+EXTRACTION_JSON_CONTRACT = """Return only this JSON object:
+{
+  "chip_name": "",
+  "chip_type": "DIGITAL_74|DIGITAL_54|DIGITAL_4000|MEMORY|LDO|EEPROM|ANALOG_GENERAL|UNKNOWN",
+  "dc_params": [
+    {
+      "param_name": "",
+      "category": "A|B|C",
+      "test_scenario": "DIGITAL_DC|DIGITAL_AC|LDO|EEPROM|GENERAL",
+      "condition": "",
+      "min_val": null,
+      "typ_val": null,
+      "max_val": null,
+      "unit": "",
+      "confidence": 0.9,
+      "sts_test_function": "FOVI_Test|DIO_Test|QTMU_Test|ACSM_Test"
+    }
+  ],
+  "pin_definitions": [
+    {
+      "pin_no": 1,
+      "pin_name": "",
+      "function": "",
+      "direction": "IN|OUT|PWR|GND|BIDIR|NC",
+      "voltage_max": null,
+      "current_max": null,
+      "notes": ""
+    }
+  ]
+}
+Use [] when no params or pins. Use null for unknown numeric values."""
 
 
 class LLMExtractor:
@@ -50,7 +98,7 @@ class LLMExtractor:
         http_client = httpx.Client(
             timeout=httpx.Timeout(
                 connect=30.0,
-                read=120.0,
+                read=LLM_READ_TIMEOUT_SECONDS,
                 write=30.0,
                 pool=30.0
             ),
@@ -65,8 +113,8 @@ class LLMExtractor:
             api_key=settings.DEEPSEEK_API_KEY,
             base_url=settings.DEEPSEEK_BASE_URL,
             http_client=http_client,
-            timeout=120.0,
-            max_retries=3,
+            timeout=LLM_READ_TIMEOUT_SECONDS,
+            max_retries=LLM_MAX_RETRIES,
         )
         instructor_base_client = OpenAI(
             api_key=settings.DEEPSEEK_API_KEY,
@@ -74,7 +122,7 @@ class LLMExtractor:
             http_client=httpx.Client(
                 timeout=httpx.Timeout(
                     connect=30.0,
-                    read=120.0,
+                    read=LLM_READ_TIMEOUT_SECONDS,
                     write=30.0,
                     pool=30.0
                 ),
@@ -85,8 +133,8 @@ class LLMExtractor:
                 ),
                 verify=False
             ),
-            timeout=120.0,
-            max_retries=3,
+            timeout=LLM_READ_TIMEOUT_SECONDS,
+            max_retries=LLM_MAX_RETRIES,
         )
         # Support both old and new instructor APIs.
         if hasattr(instructor, "from_openai"):
@@ -118,9 +166,85 @@ class LLMExtractor:
             return text[start:end + 1]
         return text
 
-    def _create_structured_plan(self, prompt: str) -> TestPlan:
+    @staticmethod
+    def _empty_to_none(value):
+        if value in ("", "N/A", "NA", "-", "--"):
+            return None
+        return value
+
+    @classmethod
+    def _normalize_payload(cls, payload: Dict) -> Dict:
+        """Normalize compact LLM JSON before Pydantic validation."""
+        if not isinstance(payload, dict):
+            return {}
+
+        normalized = {
+            "chip_name": payload.get("chip_name") or "",
+            "chip_type": (payload.get("chip_type") or "UNKNOWN").upper(),
+            "dc_params": [],
+            "pin_definitions": [],
+        }
+        if normalized["chip_type"] not in VALID_CHIP_TYPES:
+            normalized["chip_type"] = "UNKNOWN"
+
+        params = payload.get("dc_params") or []
+        if not isinstance(params, list):
+            params = []
+        for item in params:
+            if not isinstance(item, dict):
+                continue
+
+            param = dict(item)
+            for field in ["param_name", "category", "test_scenario", "condition", "unit"]:
+                if param.get(field) is None:
+                    param[field] = ""
+                else:
+                    param[field] = str(param.get(field)).strip()
+
+            if not param["param_name"]:
+                continue
+            if param["category"] not in {"A", "B", "C"}:
+                param["category"] = "A"
+            if param["test_scenario"] not in VALID_TEST_SCENARIOS:
+                param["test_scenario"] = "GENERAL"
+
+            for field in NUMERIC_FIELDS:
+                if field in param:
+                    param[field] = cls._empty_to_none(param[field])
+
+            normalized["dc_params"].append(param)
+
+        pins = payload.get("pin_definitions") or []
+        if not isinstance(pins, list):
+            pins = []
+        for item in pins:
+            if not isinstance(item, dict):
+                continue
+
+            pin = dict(item)
+            try:
+                pin["pin_no"] = int(pin.get("pin_no"))
+            except (TypeError, ValueError):
+                continue
+
+            for field in ["pin_name", "function", "notes"]:
+                if pin.get(field) is None:
+                    pin[field] = ""
+                else:
+                    pin[field] = str(pin.get(field)).strip()
+
+            direction = str(pin.get("direction") or "IN").strip().upper()
+            pin["direction"] = direction if direction in VALID_PIN_DIRECTIONS else "IN"
+            for field in NUMERIC_FIELDS:
+                if field in pin:
+                    pin[field] = cls._empty_to_none(pin[field])
+
+            normalized["pin_definitions"].append(pin)
+
+        return normalized
+
+    def _create_structured_plan(self, prompt: str, max_tokens: int = EXTRACTION_MAX_TOKENS) -> TestPlan:
         """Use plain chat completion + JSON parsing to avoid instructor/function-call incompatibility."""
-        schema = json.dumps(TestPlan.model_json_schema(), ensure_ascii=False)
         completion = self.raw_client.chat.completions.create(
             model=settings.DEEPSEEK_MODEL,
             messages=[
@@ -135,34 +259,17 @@ class LLMExtractor:
                     "role": "user",
                     "content": (
                         f"{prompt}\n\n"
-                        "You must respond with one JSON object matching this schema:\n"
-                        f"{schema}"
+                        f"{EXTRACTION_JSON_CONTRACT}"
                     ),
                 },
             ],
             temperature=settings.TEMPERATURE,
-            max_tokens=settings.MAX_TOKENS,
+            max_tokens=max_tokens,
             response_format={"type": "json_object"},
         )
         content = completion.choices[0].message.content or "{}"
         json_text = self._extract_json_text(content)
-        payload = json.loads(json_text)
-
-        # LLMs sometimes emit null for string fields that are modeled as str.
-        for param in payload.get("dc_params", []) or []:
-            if param.get("condition") is None:
-                param["condition"] = ""
-            if param.get("unit") is None:
-                param["unit"] = ""
-            if param.get("param_name") is None:
-                param["param_name"] = ""
-        for pin in payload.get("pin_definitions", []) or []:
-            if pin.get("function") is None:
-                pin["function"] = ""
-            if pin.get("notes") is None:
-                pin["notes"] = ""
-            if pin.get("pin_name") is None:
-                pin["pin_name"] = ""
+        payload = self._normalize_payload(json.loads(json_text))
 
         return TestPlan.model_validate(payload)
 
@@ -216,6 +323,7 @@ class LLMExtractor:
                 model=settings.DEEPSEEK_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
+                max_tokens=CHIP_DETECT_MAX_TOKENS,
             )
             chip_type = (resp.choices[0].message.content or "").strip().upper()
 
@@ -275,8 +383,11 @@ class LLMExtractor:
         else:
             prompt = self._build_general_prompt(chunk)
 
+        prompt_chars = len(prompt)
+        chunk_t0 = time.perf_counter()
         try:
-            resp = self._create_structured_plan(prompt)
+            resp = self._create_structured_plan(prompt, max_tokens=EXTRACTION_MAX_TOKENS)
+            elapsed = time.perf_counter() - chunk_t0
 
             for param in resp.dc_params:
                 if isinstance(chunk["page"], int):
@@ -300,12 +411,22 @@ class LLMExtractor:
                 f"params {len(resp.dc_params)}, "
                 f"pins {len(resp.pin_definitions)}"
             )
+            logger.info(
+                f"[perf] llm_chunk page={chunk['page']} cost={elapsed:.2f}s "
+                f"input_chars={prompt_chars} params={len(resp.dc_params)} "
+                f"pins={len(resp.pin_definitions)}"
+            )
             return resp
 
         except Exception as e:
+            elapsed = time.perf_counter() - chunk_t0
             logger.error(
                 f"Page {chunk['page']} extraction failed: "
                 f"{type(e).__name__}: {e}"
+            )
+            logger.info(
+                f"[perf] llm_chunk page={chunk['page']} cost={elapsed:.2f}s "
+                f"input_chars={prompt_chars} status=failed"
             )
             logger.error(traceback.format_exc())
             return TestPlan()
