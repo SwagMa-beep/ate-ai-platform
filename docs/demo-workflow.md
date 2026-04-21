@@ -1,7 +1,4 @@
 # Demo Workflow
-
-This document describes a repeatable demo path for ATE-AI-Platform. It is designed for project reviews, interviews, and quick local verification.
-
 ## Demo Goal
 
 Show the full flow from a chip datasheet to ATE development artifacts:
@@ -203,14 +200,6 @@ The skipped tests are manual integration workflow tests. To run them, start the 
 $env:RUN_INTEGRATION_TESTS="1"
 python -m pytest backend/tests/test_full_workflow.py -q
 ```
-
-## Demo Talking Points
-
-- The project is not a generic chatbot. It targets a concrete ATE test-development workflow.
-- The backend is modular: extraction, validation, resource mapping, code generation, RAG, and diagnosis are separated.
-- The system has deterministic fallback paths where possible, such as template-based code generation and TF-IDF retrieval fallback.
-- Generated artifacts are reviewable by engineers: Excel, JSON, SVG, BOM, and C++ source code.
-- Unit tests cover core local logic without requiring API keys or external services.
 
 ## Known Demo Notes
 
