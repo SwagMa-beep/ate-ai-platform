@@ -21,6 +21,28 @@ let backendInfo = {
   stderrTail: '',
 };
 
+function parseDotEnv(filePath) {
+  const text = readTextFileIfExists(filePath);
+  if (!text) return {};
+  const env = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
 function getBackendPidFile() {
   return path.join(app.getPath('userData'), 'backend.pid');
 }
@@ -55,6 +77,15 @@ function getBackendDir() {
     return path.join(process.resourcesPath, 'backend');
   }
   return path.join(getRepoRootDir(), 'backend');
+}
+
+function getPackagedBackendServerExe() {
+  if (!app.isPackaged) return null;
+  return path.join(process.resourcesPath, 'backend-server', 'backend-server.exe');
+}
+
+function getBackendDataDir() {
+  return path.join(app.getPath('userData'), 'backend-data');
 }
 
 function readTextFileIfExists(filePath) {
@@ -109,7 +140,7 @@ function cleanupStaleBackendProcess() {
   }
 
   const cmd = getProcessCommandLine(pid);
-  if (!cmd || !cmd.includes('uvicorn') || !cmd.includes('app.main:app')) {
+  if (!cmd || (!cmd.includes('backend-server') && !(cmd.includes('uvicorn') && cmd.includes('app.main:app')))) {
     clearBackendPidFile();
     return;
   }
@@ -227,37 +258,73 @@ async function startBackendWithAutoPort() {
 
 function startBackend(port) {
   const backendDir = getBackendDir();
-  const python = resolvePythonCommand();
-  if (!python) {
-    throw new Error(
-      'Python runtime not found. Install Python 3.10+ or set PYTHON_PATH to python.exe.'
-    );
+  const packagedBackendExe = getPackagedBackendServerExe();
+  const usePackagedBackend = Boolean(
+    packagedBackendExe && fs.existsSync(packagedBackendExe)
+  );
+
+  let command;
+  let args;
+  let cwd;
+  if (usePackagedBackend) {
+    command = packagedBackendExe;
+    args = [
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+      '--data-dir',
+      getBackendDataDir(),
+    ];
+    cwd = path.dirname(packagedBackendExe);
+  } else {
+    const python = resolvePythonCommand();
+    if (!python) {
+      throw new Error(
+        'Backend runtime not found. Packaged backend-server.exe is missing, and Python 3.10+ is not available.'
+      );
+    }
+    command = python.bin;
+    args = [
+      ...python.prefix,
+      '-m',
+      'uvicorn',
+      'app.main:app',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+    ];
+    cwd = backendDir;
   }
 
-  const args = [
-    ...python.prefix,
-    '-m',
-    'uvicorn',
-    'app.main:app',
-    '--host',
-    '127.0.0.1',
-    '--port',
-    String(port),
-  ];
-  backendInfo.pythonBin = python.bin;
+  const packagedEnv = parseDotEnv(path.join(backendDir, '.env'));
+  const userEnvDir = path.join(app.getPath('userData'), 'backend');
+  const userEnv = parseDotEnv(path.join(userEnvDir, '.env'));
+  const dataDir = getBackendDataDir();
+
+  backendInfo.pythonBin = command;
   backendInfo.args = args;
   backendInfo.stdoutTail = '';
   backendInfo.stderrTail = '';
   backendLaunchToken += 1;
   const launchToken = backendLaunchToken;
 
-  backendProcess = spawn(python.bin, args, {
-    cwd: backendDir,
+  backendProcess = spawn(command, args, {
+    cwd,
     stdio: 'pipe',
     windowsHide: true,
     env: {
       ...process.env,
+      ...packagedEnv,
+      ...userEnv,
       PYTHONIOENCODING: 'utf-8',
+      ATE_BASE_DIR: app.getPath('userData'),
+      DATA_DIR: dataDir,
+      UPLOAD_DIR: path.join(dataDir, 'uploads'),
+      PROCESSED_DIR: path.join(dataDir, 'processed'),
+      RAW_DIR: path.join(dataDir, 'raw'),
+      LOG_DIR: path.join(dataDir, 'logs'),
     },
   });
   const childPid = backendProcess.pid;
@@ -267,7 +334,7 @@ function startBackend(port) {
     if (launchToken !== backendLaunchToken) return;
     dialog.showErrorBox(
       'Backend start failed',
-      `Unable to start FastAPI backend with command "${python.bin}".\n${String(err)}`
+      `Unable to start FastAPI backend with command "${command}".\n${String(err)}`
     );
     app.quit();
   });

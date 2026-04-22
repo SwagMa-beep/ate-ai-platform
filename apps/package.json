@@ -11,8 +11,9 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "desktop:dev": "concurrently \"npm run dev\" \"wait-on tcp:3000 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:3000 electron .\"",
-    "desktop:build": "npm run build && electron-packager . \"ATE AI Platform\" --platform=win32 --arch=x64 --out=release --overwrite --prune=true --extra-resource=../backend",
-    "desktop:installer": "npm run build && electron-builder --win nsis --publish never --config.win.signAndEditExecutable=false"
+    "backend:bundle": "cd ../backend && python -m PyInstaller backend-server.spec --clean --noconfirm",
+    "desktop:build": "npm run backend:bundle && npm run build && electron-packager . \"ATE AI Platform\" --platform=win32 --arch=x64 --out=release --overwrite --prune=true --extra-resource=../backend/dist/backend-server",
+    "desktop:installer": "npm run backend:bundle && npm run build && electron-builder --win nsis --publish never --config.win.signAndEditExecutable=false"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
@@ -56,8 +57,12 @@
     ],
     "extraResources": [
       {
-        "from": "../backend",
-        "to": "backend"
+        "from": "../backend/dist/backend-server",
+        "to": "backend-server"
+      },
+      {
+        "from": "../backend/.env",
+        "to": "backend/.env"
       }
     ],
     "win": {

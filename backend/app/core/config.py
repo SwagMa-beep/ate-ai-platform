@@ -9,7 +9,12 @@ from pydantic_settings import BaseSettings
 from pydantic import field_validator
 
 # 获取项目根目录
-BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+BASE_DIR = Path(
+    os.environ.get(
+        "ATE_BASE_DIR",
+        Path(__file__).resolve().parent.parent.parent.parent,
+    )
+)
 
 class Settings(BaseSettings):
     """项目配置"""
