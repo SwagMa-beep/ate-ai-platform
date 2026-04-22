@@ -175,9 +175,25 @@ export interface HealthResult {
 // ─── 通用请求函数 ─────────────────────────────────────────────
 async function request<T>(
   url: string,
-  options?: RequestInit
+  options?: RequestInit,
+  timeoutMs = 30000
 ): Promise<ApiResponse<T>> {
-  const response = await fetch(url, options);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      signal: options?.signal || controller.signal,
+    });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error(`请求超时，请检查后端 API 是否已启动：${getApiOrigin()}`);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
   if (!response.ok) {
     // 尝试解析后端错误响应
     try {
@@ -191,7 +207,7 @@ async function request<T>(
 
 // ─── 健康检查 ─────────────────────────────────────────────────
 export async function checkHealth(): Promise<ApiResponse<HealthResult>> {
-  return request<HealthResult>(`${getApiOrigin()}/health`);
+  return request<HealthResult>(`${getApiOrigin()}/health`, undefined, 5000);
 }
 
 // ─── TestPlan API ─────────────────────────────────────────────
@@ -203,7 +219,7 @@ export async function uploadPDF(file: File): Promise<ApiResponse<UploadResult>> 
   return request<UploadResult>(`${getBaseUrl()}/testplan/upload`, {
     method: 'POST',
     body: formData,
-  });
+  }, 20000);
 }
 
 /** 同步提取 TestPlan */

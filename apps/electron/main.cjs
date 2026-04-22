@@ -21,6 +21,20 @@ let backendInfo = {
   stderrTail: '',
 };
 
+function getBackendLaunchLogFile() {
+  return path.join(app.getPath('userData'), 'backend-launch.log');
+}
+
+function appendBackendLaunchLog(message) {
+  try {
+    const line = `[${new Date().toISOString()}] ${message}\n`;
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.appendFileSync(getBackendLaunchLogFile(), line, 'utf8');
+  } catch {
+    // ignore logging failures
+  }
+}
+
 function parseDotEnv(filePath) {
   const text = readTextFileIfExists(filePath);
   if (!text) return {};
@@ -310,6 +324,20 @@ function startBackend(port) {
   backendLaunchToken += 1;
   const launchToken = backendLaunchToken;
 
+  appendBackendLaunchLog(
+    [
+      'Starting backend',
+      `command=${command}`,
+      `args=${args.join(' ')}`,
+      `cwd=${cwd}`,
+      `port=${port}`,
+      `backendDir=${backendDir}`,
+      `dataDir=${dataDir}`,
+      `resourcesPath=${process.resourcesPath || ''}`,
+      `isPackaged=${app.isPackaged}`,
+    ].join(' | ')
+  );
+
   backendProcess = spawn(command, args, {
     cwd,
     stdio: 'pipe',
@@ -329,12 +357,15 @@ function startBackend(port) {
   });
   const childPid = backendProcess.pid;
   saveBackendPidFile(backendProcess.pid);
+  appendBackendLaunchLog(`Backend process spawned | pid=${backendProcess.pid || 'unknown'}`);
 
   backendProcess.on('error', (err) => {
     if (launchToken !== backendLaunchToken) return;
+    appendBackendLaunchLog(`Backend spawn error | ${String(err)}`);
     dialog.showErrorBox(
       'Backend start failed',
-      `Unable to start FastAPI backend with command "${command}".\n${String(err)}`
+      `Unable to start FastAPI backend with command "${command}".\n${String(err)}\n\n` +
+      `Log file: ${getBackendLaunchLogFile()}`
     );
     app.quit();
   });
@@ -343,16 +374,21 @@ function startBackend(port) {
     if (launchToken !== backendLaunchToken) return;
     const text = chunk.toString();
     backendInfo.stdoutTail = appendTail(backendInfo.stdoutTail, text);
+    appendBackendLaunchLog(`[stdout] ${text.trimEnd()}`);
     process.stdout.write(`[backend] ${text}`);
   });
   backendProcess.stderr.on('data', (chunk) => {
     if (launchToken !== backendLaunchToken) return;
     const text = chunk.toString();
     backendInfo.stderrTail = appendTail(backendInfo.stderrTail, text);
+    appendBackendLaunchLog(`[stderr] ${text.trimEnd()}`);
     process.stderr.write(`[backend] ${text}`);
   });
 
   backendProcess.on('exit', (code) => {
+    appendBackendLaunchLog(
+      `Backend process exited | code=${code ?? 'unknown'} | stdoutTail=${backendInfo.stdoutTail.trim()} | stderrTail=${backendInfo.stderrTail.trim()}`
+    );
     clearBackendPidFile();
     if (backendProcess && backendProcess.pid === childPid) {
       backendProcess = null;
@@ -363,7 +399,8 @@ function startBackend(port) {
       dialog.showErrorBox(
         'Backend exited',
         `FastAPI backend stopped unexpectedly (code: ${code ?? 'unknown'}).\n\n` +
-        `Last output:\n${details}`
+        `Last output:\n${details}\n\n` +
+        `Log file: ${getBackendLaunchLogFile()}`
       );
       app.quit();
     }
@@ -380,7 +417,8 @@ async function waitForBackendReady() {
       throw new Error(
         `Backend process exited early (code: ${backendProcess.exitCode}).\n` +
         `Command: ${backendInfo.pythonBin} ${backendInfo.args.join(' ')}\n\n` +
-        `Last output:\n${details}`
+        `Last output:\n${details}\n\n` +
+        `Log file: ${getBackendLaunchLogFile()}`
       );
     }
     try {
@@ -395,7 +433,8 @@ async function waitForBackendReady() {
   throw new Error(
     `Backend failed to become ready on http://127.0.0.1:${backendPort}/health within 90 seconds.\n\n` +
     `Command: ${backendInfo.pythonBin} ${backendInfo.args.join(' ')}\n\n` +
-    `Last output:\n${details}`
+    `Last output:\n${details}\n\n` +
+    `Log file: ${getBackendLaunchLogFile()}`
   );
 }
 
@@ -483,9 +522,11 @@ async function bootstrap() {
     isBootstrapping = false;
     await createWindow();
   } catch (err) {
+    appendBackendLaunchLog(`Desktop bootstrap failed | ${err instanceof Error ? err.message : String(err)}`);
     dialog.showErrorBox(
       'Desktop app startup failed',
-      err instanceof Error ? err.message : String(err)
+      `${err instanceof Error ? err.message : String(err)}\n\n` +
+      `Log file: ${getBackendLaunchLogFile()}`
     );
     app.quit();
   }

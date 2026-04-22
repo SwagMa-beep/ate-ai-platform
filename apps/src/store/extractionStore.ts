@@ -1,6 +1,6 @@
-import { 
-  uploadPDF, extractTestplanAsync, getTaskStatus, getPinDefinitions,
-  type UploadResult, type ExtractionResult, type PinDefinition 
+import {
+  uploadPDF, extractTestplanAsync, getTaskStatus, getPinDefinitions, checkHealth,
+  type UploadResult, type ExtractionResult, type PinDefinition
 } from '../api/backend';
 
 export type Stage = 'idle' | 'uploading' | 'extracting' | 'done' | 'error';
@@ -93,6 +93,15 @@ class ExtractionStore {
     this.update({ stage: 'uploading', progress: 10, message: '正在上传文件...', error: '' });
 
     try {
+      const health = await checkHealth();
+      if (health.status !== 'success' || !health.data) {
+        this.update({
+          stage: 'error',
+          error: health.message || '后端 API 未连接，请重新打开应用或检查本机防火墙/杀毒软件是否拦截 backend-server.exe',
+        });
+        return;
+      }
+
       const res = await uploadPDF(file);
       if (res.status === 'success' && res.data) {
         const fileInfo = res.data;
