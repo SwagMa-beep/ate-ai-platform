@@ -119,6 +119,7 @@ export interface ExtractionResult {
   };
   warnings: string[];
   range_recommendations?: RangeRecommendation[];
+  run?: AgentRunResult;
 }
 
 export interface PinDefinition {
@@ -154,12 +155,22 @@ export interface ResourceMapResult {
   pin_count: number;
   pgs_items: number;
   pin_auto_loaded: boolean;
+  summary?: {
+    resource_type_counts: Record<string, number>;
+    power_pin_count: number;
+    bidir_pin_count: number;
+    unassigned_count: number;
+    dio_site1_count: number;
+    dio_site2_count: number;
+    site_count: number;
+  };
   download: {
     resource_map_excel: string;
     schematic_svg: string;
     bom_excel: string;
   };
   warnings: string[];
+  run?: AgentRunResult;
 }
 
 // ─── 健康检查 ─────────────────────────────────────────────────
@@ -237,12 +248,20 @@ export async function extractTestplan(
 
 export interface TaskStatusResult {
   task_id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelling' | 'cancelled';
   progress: number;
   message: string;
+  file_id?: string;
+  pages?: string;
+  max_workers?: number;
   result?: ExtractionResult;
   start_time?: string;
   end_time?: string;
+}
+
+export interface TaskListResult {
+  items: TaskStatusResult[];
+  total: number;
 }
 
 /** 异步提取 TestPlan（提交任务） */
@@ -261,6 +280,29 @@ export async function extractTestplanAsync(
 /** 查询任务状态 */
 export async function getTaskStatus(taskId: string): Promise<ApiResponse<TaskStatusResult>> {
   return request<TaskStatusResult>(`${getBaseUrl()}/testplan/status/${taskId}`);
+}
+
+export async function listExtractionTasks(limit = 50): Promise<ApiResponse<TaskListResult>> {
+  return request<TaskListResult>(`${getBaseUrl()}/testplan/tasks?limit=${limit}`);
+}
+
+export async function retryExtractionTask(taskId: string): Promise<ApiResponse<{ task_id: string; status_url: string; file_id: string }>> {
+  return request(`${getBaseUrl()}/testplan/retry/${taskId}`, {
+    method: 'POST',
+  });
+}
+
+export async function cancelExtractionTask(taskId: string): Promise<ApiResponse<{ task_id: string; status: string }>> {
+  return request(`${getBaseUrl()}/testplan/cancel/${taskId}`, {
+    method: 'POST',
+  });
+}
+
+export async function cleanExtractionTasks(status?: 'completed' | 'failed' | 'cancelled'): Promise<ApiResponse<{ deleted_count: number; statuses: string[] }>> {
+  const suffix = status ? `?status=${status}` : '';
+  return request(`${getBaseUrl()}/testplan/tasks${suffix}`, {
+    method: 'DELETE',
+  });
 }
 
 /** 获取引脚定义 */
@@ -306,6 +348,9 @@ export interface CodegenRequest {
   chip_type:    'digital' | 'ldo' | 'custom';
   test_items:   string[];
   user_prompt:  string;
+  file_id?:     string;
+  auto_recommend?: boolean;
+  export_package?: boolean;
   pin_names?:   string[];
   input_pins?:  string[];
   output_pins?: string[];
@@ -313,6 +358,144 @@ export interface CodegenRequest {
   vout?:        number;
   ldo_out_pin?: number;
   load_ma?:     number;
+}
+
+export interface CompileValidationResult {
+  attempted: boolean;
+  passed: boolean;
+  compiler?: string;
+  command?: string;
+  diagnostics?: string[];
+}
+
+export interface GeneratedPackageFile {
+  file_type: string;
+  path: string;
+  relative_path: string;
+}
+
+export interface PackageValidationCheck {
+  name: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface PackageBuildValidation {
+  attempted: boolean;
+  passed: boolean;
+  tool?: string | null;
+  command?: string[];
+  diagnostics?: string[];
+}
+
+export interface PackageValidationResult {
+  attempted: boolean;
+  passed: boolean;
+  checks: PackageValidationCheck[];
+  build_validation: PackageBuildValidation;
+  diagnostics?: string[];
+}
+
+export interface CodegenPlanItem {
+  item: string;
+  description: string;
+  apis: string[];
+  template_source: string;
+  vector_required: boolean;
+  pin_requirements: {
+    needs_input_pins: boolean;
+    needs_output_pins: boolean;
+  };
+  blocking_errors?: string[];
+  warnings?: string[];
+}
+
+export interface CodegenPlan {
+  chip_name: string;
+  chip_type: string;
+  scenario: string;
+  selected_items: string[];
+  recommended_items: string[];
+  resources: string[];
+  requires_vector: boolean;
+  requires_pgs: boolean;
+  electrical: {
+    vcc: number;
+    vout: number;
+    ldo_out_pin: number;
+    load_ma: number;
+  };
+  pins: {
+    pin_count: number;
+    input_count: number;
+    output_count: number;
+    power_like_count?: number;
+  };
+  items: CodegenPlanItem[];
+  errors: string[];
+  warnings: string[];
+}
+
+export interface AgentRunStep {
+  agent: string;
+  status: string;
+  warnings?: string[];
+  errors?: string[];
+  artifacts?: {
+    type?: string;
+    summary?: Record<string, unknown>;
+  }[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentRunArtifact {
+  type?: string;
+  summary?: Record<string, unknown>;
+}
+
+export interface AgentRunResult {
+  run_id: string;
+  flow_name: string;
+  status: string;
+  steps: AgentRunStep[];
+  warnings: string[];
+  errors: string[];
+  artifacts: AgentRunArtifact[];
+}
+
+export async function listAgentRuns(limit = 20, flowName?: string): Promise<ApiResponse<{ items: AgentRunResult[]; total: number }>> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (flowName) params.append('flow_name', flowName);
+  return request<{ items: AgentRunResult[]; total: number }>(`${getBaseUrl()}/agent-runs?${params}`);
+}
+
+export async function getAgentRun(runId: string): Promise<ApiResponse<AgentRunResult>> {
+  return request<AgentRunResult>(`${getBaseUrl()}/agent-runs/${runId}`);
+}
+
+export async function getAgentRunArtifacts(runId: string): Promise<ApiResponse<{ run_id: string; flow_name: string; status: string; artifacts: AgentRunArtifact[] }>> {
+  return request<{ run_id: string; flow_name: string; status: string; artifacts: AgentRunArtifact[] }>(`${getBaseUrl()}/agent-runs/${runId}/artifacts`);
+}
+
+export interface PackageExportResult {
+  generation_id: string;
+  chip_name: string;
+  chip_type: string;
+  generator_mode: string;
+  output_dir: string;
+  package_zip?: string | null;
+  download_url?: string | null;
+  generated_files: GeneratedPackageFile[];
+  function_count: number;
+  test_items: string[];
+  package_validation?: PackageValidationResult;
+  notes: string[];
+  inputs: {
+    testplan_json: string;
+    resource_map_excel?: string | null;
+    bom_excel?: string | null;
+    schematic_svg?: string | null;
+  };
 }
 
 export interface CodegenResult {
@@ -323,6 +506,14 @@ export interface CodegenResult {
   chip_name:   string;
   chip_type:   string;
   test_items:  string[];
+  recommended_items?: string[];
+  knowledge_used?: boolean;
+  knowledge_items?: {
+    item: string;
+    description: string;
+    apis: string[];
+    scenarios: string[];
+  }[];
   ai_analysis: string[];
   static_analysis?: {
     passed: boolean;
@@ -337,6 +528,10 @@ export interface CodegenResult {
     source: string;
     score: number;
   }[];
+  plan?: CodegenPlan;
+  compile_validation?: CompileValidationResult;
+  package_export?: PackageExportResult;
+  run?: AgentRunResult;
 }
 
 export interface TemplateItem {
@@ -348,6 +543,11 @@ export interface TemplateItem {
 export interface TemplatesResult {
   digital: TemplateItem[];
   ldo:     TemplateItem[];
+  knowledge_summary?: {
+    root: string;
+    sample_count: number;
+    item_count: number;
+  };
 }
 
 /** 生成 STS8200S 测试代码 */
@@ -362,6 +562,25 @@ export async function generateCode(req: CodegenRequest): Promise<ApiResponse<Cod
 /** 获取支持的测试项模板列表 */
 export async function getCodeTemplates(): Promise<ApiResponse<TemplatesResult>> {
   return request<TemplatesResult>(`${getBaseUrl()}/codegen/templates`);
+}
+
+export interface CodegenRecommendation {
+  chip_type: string;
+  scenario: string;
+  source: string;
+  recommended_items: string[];
+  optional_items: string[];
+  detected_params?: string[];
+  reason_summary?: string[];
+  available_items: string[];
+}
+
+export async function recommendCodeItems(req: { chip_type?: string; file_id?: string }): Promise<ApiResponse<CodegenRecommendation>> {
+  return request<CodegenRecommendation>(`${getBaseUrl()}/codegen/recommend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
 }
 
 // ─── RAG 相关类型 ──────────────────────────────────────────────

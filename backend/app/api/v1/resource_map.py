@@ -18,6 +18,12 @@ from app.utils.svg_generator import SVGGenerator
 from app.utils.bom_generator import generate_bom_excel
 from app.utils.resource_map_exporter import export_resource_map_excel
 from app.models.testplan import ExtractionResult
+from app.models.resource_map import AdapterInfo, PinGroupConfig, PGSConfig, PGSDetailCondition, ResourceMapping
+from app.services.run_store import get_run_store
+from app.flows.module2_resource_map_flow import (
+    build_module2_resource_map_controller,
+    finalize_module2_run,
+)
 from app.core.config import get_settings
 from app.utils.logger import setup_logger
 
@@ -27,178 +33,148 @@ router   = APIRouter()
 
 service = ResourceMappingService()
 svg_gen = SVGGenerator()
+run_store = get_run_store()
+controller = build_module2_resource_map_controller(service=service)
 
 
 @router.post("/generate")
 async def generate_resource_map(
-    file_id:   str                    = Form(...),
-    dual_site: bool                   = Form(False),
-    pin_file:  Optional[UploadFile]   = File(None)  # ← 改为可选
+    file_id: str = Form(...),
+    dual_site: bool = Form(False),
+    pin_file: Optional[UploadFile] = File(None),
 ):
-    """
-    生成资源映射（核心接口）
-
-    - **file_id**   : 模块一生成的文件ID
-    - **dual_site** : 是否使用双工位适配器（LDO场景）
-    - **pin_file**  : PinMapping文件（可选）
-                      若模块一已自动提取引脚则不需要上传
-                      若需要手动指定则上传xlsx/csv文件
-    """
-    # ── 1. 读取模块一JSON结果 ────────────────────────────────
-    json_files = list(
-        settings.PROCESSED_DIR.glob(f"*{file_id}*TestPlan.json")
-    )
+    """????????????"""
+    json_files = list(settings.PROCESSED_DIR.glob(f"*{file_id}*TestPlan.json"))
     if not json_files:
-        raise HTTPException(
-            404,
-            f"未找到file_id={file_id}对应的TestPlan JSON，"
-            f"请先完成模块一提取"
-        )
+        raise HTTPException(404, f"??? file_id={file_id} ??? TestPlan JSON??????????")
 
     with open(json_files[-1], "r", encoding="utf-8") as f:
         json_data = json.load(f)
 
     chip_name = json_data.get("chip_name", "Unknown")
     chip_type = json_data.get("chip_type", "UNKNOWN")
-    stats     = json_data.get("statistics", {})
+    stats = json_data.get("statistics", {})
 
     extraction_result = ExtractionResult(
-        status       = "success",
-        chip_name    = chip_name,
-        chip_type    = chip_type,
-        test_scenario= json_data.get("test_scenario", "GENERAL"),
-        total_params = stats.get("total",   0),
-        a_params     = stats.get("A_class", 0),
-        b_params     = stats.get("B_class", 0),
-        c_params     = stats.get("C_class", 0),
+        status="success",
+        chip_name=chip_name,
+        chip_type=chip_type,
+        test_scenario=json_data.get("test_scenario", "GENERAL"),
+        total_params=stats.get("total", 0),
+        a_params=stats.get("A_class", 0),
+        b_params=stats.get("B_class", 0),
+        c_params=stats.get("C_class", 0),
     )
 
-    # ── 2. 读取引脚定义（优先JSON，其次上传文件）────────────
     pin_defs_raw = json_data.get("pin_definitions", [])
-    pin_df       = None
+    pin_df = None
 
     if pin_defs_raw:
-        # ✅ 模块一已自动提取引脚，直接使用
         pin_df = pd.DataFrame(pin_defs_raw)
-        logger.info(
-            f"✅ 自动读取引脚定义: {len(pin_df)}个 (来自模块一JSON)"
-        )
-
+        logger.info(f"Auto-loaded pin definitions: {len(pin_df)} from module 1 JSON")
     elif pin_file:
-        # 用户手动上传PinMapping文件
-        if not pin_file.filename.lower().endswith(
-            (".xlsx", ".xls", ".csv")
-        ):
-            raise HTTPException(
-                400, "PinMapping文件格式错误，支持xlsx/xls/csv"
-            )
+        if not pin_file.filename.lower().endswith((".xlsx", ".xls", ".csv")):
+            raise HTTPException(400, "PinMapping ????????? xlsx/xls/csv")
         contents = await pin_file.read()
         try:
             if pin_file.filename.endswith(".csv"):
                 pin_df = pd.read_csv(BytesIO(contents))
             else:
                 pin_df = pd.read_excel(BytesIO(contents))
-            logger.info(
-                f"✅ 从上传文件读取引脚: {len(pin_df)}个"
-            )
-        except Exception as e:
-            raise HTTPException(400, f"PinMapping文件解析失败: {e}")
-
+            logger.info(f"Loaded pin definitions from uploaded file: {len(pin_df)}")
+        except Exception as exc:
+            raise HTTPException(400, f"PinMapping ??????: {exc}")
     else:
-        # 既没有自动提取，也没有上传文件
         raise HTTPException(
             400,
-            f"未找到引脚定义，请选择以下方案之一：\n"
-            f"方案1：重新运行模块一（会自动提取引脚）\n"
-            f"方案2：上传 pin_file（PinMapping Excel文件）\n"
-            f"方案3：先下载模板填写: GET /api/v1/resource-map/"
-            f"pinmapping-template/{chip_type}"
+            "????????????????????????? pin_file?PinMapping Excel/CSV?",
         )
 
     if pin_df is None or pin_df.empty:
-        raise HTTPException(400, "引脚数据为空，请检查文件内容")
+        raise HTTPException(400, "??????????????")
 
-    # ── 3. 执行资源映射 ──────────────────────────────────────
-    logger.info(
-        f" 开始资源映射 | 芯片: {chip_name} [{chip_type}]"
+    logger.info(f"Start resource mapping: {chip_name} [{chip_type}]")
+    run = controller.run_flow(
+        flow_name="module2_resource_map",
+        payload={
+            "file_id": file_id,
+            "chip_type": chip_type,
+            "dual_site": dual_site,
+            "extraction_result": extraction_result,
+            "pin_mapping_df": pin_df,
+        },
     )
-    result = service.generate_resource_map(
-        extraction_result, pin_df, dual_site
-    )
+    run_store.save_run(run.to_dict())
 
-    if result.status != "success":
-        raise HTTPException(
-            500,
-            f"资源映射失败: {'; '.join(result.errors)}"
-        )
+    if run.status != "completed":
+        message = run.errors[-1] if run.errors else "??????"
+        raise HTTPException(500, message)
 
-    # ── 4. 生成输出文件 ──────────────────────────────────────
-    timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result = run.shared.get("resource_map_result") or {}
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_prefix = f"{chip_name}_{timestamp}"
 
-    # 资源映射Excel
-    excel_path = str(
-        settings.PROCESSED_DIR / f"{out_prefix}_ResourceMap.xlsx"
-    )
+    excel_path = str(settings.PROCESSED_DIR / f"{out_prefix}_ResourceMap.xlsx")
+    adapter_info = AdapterInfo.model_validate(result.get("adapter_info") or {})
+    resource_mappings = [ResourceMapping.model_validate(item) for item in result.get("resource_mappings", [])]
+    pgs_configs = [PGSConfig.model_validate(item) for item in result.get("pgs_configs", [])]
+    pgs_details = [PGSDetailCondition.model_validate(item) for item in result.get("pgs_detail_conditions", [])]
+    pin_groups = PinGroupConfig.model_validate(result.get("pin_groups") or {})
+
     export_resource_map_excel(
-        chip_name         = chip_name,
-        chip_type         = result.chip_type,
-        adapter_info      = result.adapter_info,
-        resource_mappings = result.resource_mappings,
-        pgs_configs       = result.pgs_configs,
-        pgs_details       = result.pgs_detail_conditions,
-        pin_groups        = result.pin_groups,
-        output_path       = excel_path
+        chip_name=chip_name,
+        chip_type=result.get("chip_type", chip_type),
+        adapter_info=adapter_info,
+        resource_mappings=resource_mappings,
+        pgs_configs=pgs_configs,
+        pgs_details=pgs_details,
+        pin_groups=pin_groups,
+        output_path=excel_path,
     )
 
-    # SVG原理图
-    svg_path = str(
-        settings.PROCESSED_DIR / f"{out_prefix}_Schematic.svg"
-    )
+    svg_path = str(settings.PROCESSED_DIR / f"{out_prefix}_Schematic.svg")
     svg_gen.generate(
-        chip_name   = chip_name,
-        chip_type   = result.chip_type,
-        mappings    = result.resource_mappings,
-        output_path = svg_path
+        chip_name=chip_name,
+        chip_type=result.get("chip_type", chip_type),
+        mappings=resource_mappings,
+        output_path=svg_path,
     )
 
-    # BOM清单Excel
-    bom_path = str(
-        settings.PROCESSED_DIR / f"{out_prefix}_BOM.xlsx"
-    )
+    bom_path = str(settings.PROCESSED_DIR / f"{out_prefix}_BOM.xlsx")
     generate_bom_excel(
-        bom_items     = result.adapter_info.bom_items,
-        chip_name     = chip_name,
-        adapter_model = result.adapter_model,
-        output_path   = bom_path
+        bom_items=adapter_info.bom_items,
+        chip_name=chip_name,
+        adapter_model=result.get("adapter_model", ""),
+        output_path=bom_path,
     )
 
-    logger.success(
-        f"✅ 资源映射完成 | 适配器: {result.adapter_model}"
-    )
-
-    return {
-        "status":  "success",
-        "message": "资源映射生成完成",
-        "data": {
-            "chip_name":       chip_name,
-            "chip_type":       result.chip_type,
-            "adapter":         result.adapter_model,
-            "pin_count":       len(result.resource_mappings),
-            "pgs_items":       len(result.pgs_configs),
-            "pin_auto_loaded": len(pin_defs_raw) > 0,  # 是否自动加载引脚
-            "download": {
-                "resource_map_excel":
-                    f"/api/v1/resource-map/download/{out_prefix}/excel",
-                "schematic_svg":
-                    f"/api/v1/resource-map/download/{out_prefix}/svg",
-                "bom_excel":
-                    f"/api/v1/resource-map/download/{out_prefix}/bom",
-            },
-            "warnings": result.warnings,
-        }
+    mappings = result.get("resource_mappings", [])
+    summary = {
+        "resource_type_counts": {
+            resource_type: sum(1 for mapping in mappings if mapping.get("resource_type") == resource_type)
+            for resource_type in sorted({mapping.get("resource_type", "UNKNOWN") for mapping in mappings})
+        },
+        "power_pin_count": sum(1 for mapping in mappings if mapping.get("resource_type") == "VI" and str(mapping.get("signal_type", "")).upper() == "POWER"),
+        "bidir_pin_count": sum(1 for mapping in mappings if str(mapping.get("signal_type", "")).upper() == "BIDIR"),
+        "unassigned_count": sum(1 for mapping in mappings if mapping.get("resource_type") == "NC"),
+        "dio_site1_count": sum(1 for mapping in mappings if mapping.get("resource_type") == "DIO" and int(mapping.get("channel_no", 0)) < 12),
+        "dio_site2_count": sum(1 for mapping in mappings if mapping.get("resource_type") == "DIO" and int(mapping.get("channel_no", 0)) >= 12),
+        "site_count": 2 if dual_site else 1,
     }
 
+    finalized = finalize_module2_run(
+        run,
+        chip_name=chip_name,
+        out_prefix=out_prefix,
+        pin_auto_loaded=len(pin_defs_raw) > 0,
+        summary=summary,
+    )
+    logger.success(f"Resource mapping finished | adapter={finalized.get('adapter', "")}")
+    return {
+        "status": "success",
+        "message": "????????",
+        "data": finalized,
+    }
 
 @router.get("/download/{prefix}/{file_type}")
 async def download_resource_file(prefix: str, file_type: str):

@@ -1,120 +1,256 @@
 """
-模块三：测试代码生成 API
-POST /api/v1/codegen/generate
+Module 3 code generation API.
 """
-from fastapi import APIRouter, Body
+from __future__ import annotations
+
+import json
+from pathlib import Path
 from typing import Optional
+
+from fastapi import APIRouter, Body
 from pydantic import BaseModel, Field
 
-from app.services.codegen_service import CodegenService
+from app.core.config import get_settings
+from app.core.response import error, success
+from app.flows.module3_codegen_flow import (
+    build_module3_codegen_controller,
+    finalize_module3_run,
+)
 from app.services.code_validator import CodeValidator
-from app.core.response import success, error
+from app.services.codegen_planner_service import CodegenPlannerService
+from app.services.codegen_service import CodegenService, TEMPLATES
+from app.services.compile_validation_service import CompileValidationService
+from app.services.enterprise_code_knowledge import get_enterprise_code_knowledge_service
+from app.services.run_store import get_run_store
+from app.services.testprogram_service import TestProgramService
 from app.utils.logger import setup_logger
 
-logger    = setup_logger()
-router    = APIRouter()
-service   = CodegenService()
-validator = CodeValidator()
+settings = get_settings()
+logger = setup_logger()
+router = APIRouter()
 
+service = CodegenService()
+validator = CodeValidator()
+compile_validator = CompileValidationService()
+planner = CodegenPlannerService()
+testprogram_service = TestProgramService()
+run_store = get_run_store()
+controller = build_module3_codegen_controller(
+    planner=planner,
+    service=service,
+    static_validator=validator,
+    compile_validator=compile_validator,
+    testprogram_service=testprogram_service,
+)
 
 
 class CodegenRequest(BaseModel):
-    chip_name:   str        = Field("MyChip",   description="芯片型号名称")
-    chip_type:   str        = Field("digital",  description="芯片类型: digital | ldo | custom")
-    test_items:  list[str]  = Field(["CON","FUN"], description="测试项列表")
-    user_prompt: str        = Field("",         description="用户自然语言描述")
-    # 引脚配置（可选，模块一提取后自动填入）
-    pin_names:    Optional[list[str]] = Field(None, description="所有引脚名称列表")
-    input_pins:   Optional[list[str]] = Field(None, description="输入引脚名称列表")
-    output_pins:  Optional[list[str]] = Field(None, description="输出引脚名称列表")
-    # 电气参数
-    vcc:          float = Field(5.0,  description="电源电压(V)")
-    vout:         float = Field(3.3,  description="LDO 输出电压(V)，仅 ldo 类型使用")
-    ldo_out_pin:  int   = Field(2,    description="LDO 输出引脚 DIO 编号")
-    load_ma:      float = Field(100.0, description="负载电流(mA)，仅 ldo 类型使用")
+    chip_name: str = Field("MyChip", description="Chip name")
+    chip_type: str = Field("digital", description="digital | ldo | custom or extracted chip type")
+    test_items: list[str] = Field(default_factory=list, description="Selected test items; empty means auto recommend")
+    user_prompt: str = Field("", description="Natural language instruction")
+    file_id: Optional[str] = Field(None, description="Optional extracted module 1 file id")
+    auto_recommend: bool = Field(True, description="Auto fill test items when request leaves them empty")
+    export_package: bool = Field(False, description="Export engineering package under processed/generated_programs")
+    pin_names: Optional[list[str]] = Field(None, description="Pin names")
+    input_pins: Optional[list[str]] = Field(None, description="Input pins")
+    output_pins: Optional[list[str]] = Field(None, description="Output pins")
+    vcc: float = Field(5.0, description="Supply voltage")
+    vout: float = Field(3.3, description="LDO nominal output voltage")
+    ldo_out_pin: int = Field(2, description="LDO output pin / channel")
+    load_ma: float = Field(100.0, description="LDO load current in mA")
 
 
-@router.post("/generate", summary="AI 生成 STS8200S 测试代码")
+class RecommendRequest(BaseModel):
+    chip_type: Optional[str] = Field(None, description="Chip type")
+    file_id: Optional[str] = Field(None, description="Module 1 extracted file id")
+
+
+def _load_testplan_by_file_id(file_id: str) -> Optional[dict]:
+    candidates = sorted(settings.PROCESSED_DIR.glob(f"*{file_id}*TestPlan.json"))
+    if not candidates:
+        return None
+    return json.loads(Path(candidates[-1]).read_text(encoding="utf-8"))
+
+
+def _available_items() -> set[str]:
+    knowledge = get_enterprise_code_knowledge_service()
+    return set(knowledge.get_catalog()["available_items"].keys()) | set(TEMPLATES.keys())
+
+
+def _recommend_payload(chip_type: Optional[str], file_id: Optional[str]) -> dict:
+    knowledge = get_enterprise_code_knowledge_service()
+    resolved_chip_type = chip_type or "custom"
+    param_names: list[str] = []
+    source = "manual"
+
+    if file_id:
+        data = _load_testplan_by_file_id(file_id)
+        if data:
+            resolved_chip_type = data.get("chip_type") or resolved_chip_type
+            param_names = [param.get("param_name", "") for param in data.get("parameters", [])]
+            source = "module1"
+
+    recommended_items = knowledge.recommend_test_items(resolved_chip_type, param_names=param_names)
+    scenario = knowledge.resolve_scenario(resolved_chip_type)
+    scenario_items = knowledge.get_catalog()["scenario_items"].get(scenario, [])
+    optional_items = [item for item in scenario_items if item not in recommended_items]
+    detected_params = sorted({name for name in (str(item or "").upper() for item in param_names) if name})
+    reason_summary: list[str] = []
+    if source == "module1" and detected_params:
+        preview = ", ".join(detected_params[:8])
+        suffix = " ..." if len(detected_params) > 8 else ""
+        reason_summary.append(f"模块一提取参数命中: {preview}{suffix}")
+    if scenario:
+        reason_summary.append(f"当前场景判定为 {scenario}，按企业样本知识库排序推荐测试项。")
+    if recommended_items:
+        reason_summary.append(f"优先推荐 {len(recommended_items)} 项，覆盖当前芯片常见 DC/AC/功能测试骨架。")
+    return {
+        "chip_type": resolved_chip_type,
+        "scenario": scenario,
+        "source": source,
+        "recommended_items": recommended_items,
+        "optional_items": optional_items,
+        "detected_params": detected_params,
+        "reason_summary": reason_summary,
+        "available_items": [item["id"] for item in knowledge.list_items(resolved_chip_type)],
+    }
+
+
+def run_codegen_flow(req: CodegenRequest) -> tuple[int, dict]:
+    knowledge = get_enterprise_code_knowledge_service()
+    recommendation = _recommend_payload(req.chip_type, req.file_id)
+
+    test_items = list(req.test_items)
+    if not test_items and req.auto_recommend:
+        test_items = recommendation["recommended_items"]
+
+    unknown = [item for item in test_items if item not in _available_items()]
+    if unknown:
+        return 400, {
+            "status": "error",
+            "message": f"Unknown test items: {unknown}. Supported items: {sorted(_available_items())}",
+            "data": None,
+        }
+    if not test_items:
+        return 400, {
+            "status": "error",
+            "message": "Please select at least one test item or enable auto recommendation.",
+            "data": None,
+        }
+
+    payload = {
+        "chip_name": req.chip_name,
+        "chip_type": req.chip_type,
+        "test_items": test_items,
+        "user_prompt": req.user_prompt,
+        "file_id": req.file_id,
+        "export_package": req.export_package,
+        "pin_names": req.pin_names,
+        "input_pins": req.input_pins,
+        "output_pins": req.output_pins,
+        "vcc": req.vcc,
+        "vout": req.vout,
+        "ldo_out_pin": req.ldo_out_pin,
+        "load_ma": req.load_ma,
+    }
+
+    run = controller.run_flow(
+        flow_name="module3_codegen",
+        payload=payload,
+        initial_shared={
+            "recommendation": recommendation,
+            "selected_test_items": test_items,
+        },
+    )
+    run_store.save_run(run.to_dict())
+
+    if run.status != "completed":
+        last_step = run.steps[-1] if run.steps else {}
+        http_code = int(last_step.get("metadata", {}).get("http_code", 500))
+        failure_kind = last_step.get("metadata", {}).get("failure_kind")
+        if failure_kind == "blocking_constraints":
+            return http_code, {
+                "status": "error",
+                "message": "Generation plan contains blocking business constraints. Please fix the highlighted issues before generating code.",
+                "data": run.shared.get("plan"),
+            }
+        return http_code, {
+            "status": "error",
+            "message": run.errors[-1] if run.errors else "Code generation failed.",
+            "data": {"run": run.to_dict(), "plan": run.shared.get("plan")},
+        }
+
+    result = finalize_module3_run(run, knowledge)
+    run_store.save_run(run.to_dict())
+    return 200, {
+        "status": "success",
+        "message": "Code generated successfully",
+        "data": result,
+    }
+
+
+@router.post("/generate", summary="Generate STS8200S test code")
 async def generate_code(req: CodegenRequest = Body(...)):
-    """
-    根据芯片类型、测试项和用户描述，生成 STS8200S C++ 测试程序。
+    try:
+        http_code, outcome = run_codegen_flow(req)
+        if outcome["status"] == "success":
+            return success(data=outcome["data"], message=outcome["message"], code=http_code)
+        return error(outcome["message"], code=http_code, data=outcome["data"])
+    except Exception as exc:  # pragma: no cover - defensive route fallback
+        logger.error(f"Code generation failed: {exc}")
+        import traceback
 
-    **策略**：模板生成骨架代码 → DeepSeek AI 添加专业注释与分析
-    """
-    logger.info(
-        f" 代码生成请求: chip={req.chip_name}, "
-        f"type={req.chip_type}, items={req.test_items}"
+        logger.error(traceback.format_exc())
+        return error(f"Code generation failed: {exc}", code=500)
+
+
+@router.post("/recommend", summary="Recommend test items from module 1 result or chip type")
+async def recommend_code_items(req: RecommendRequest = Body(...)):
+    return success(data=_recommend_payload(req.chip_type, req.file_id), message="Recommendation ready")
+
+
+@router.post("/plan", summary="Build structured generation plan before code assembly")
+async def build_codegen_plan(req: CodegenRequest = Body(...)):
+    recommendation = _recommend_payload(req.chip_type, req.file_id)
+    test_items = list(req.test_items)
+    if not test_items and req.auto_recommend:
+        test_items = recommendation["recommended_items"]
+    plan = planner.build_plan(
+        chip_name=req.chip_name,
+        chip_type=recommendation["chip_type"],
+        test_items=test_items,
+        pin_names=req.pin_names,
+        input_pins=req.input_pins,
+        output_pins=req.output_pins,
+        vcc=req.vcc,
+        vout=req.vout,
+        ldo_out_pin=req.ldo_out_pin,
+        load_ma=req.load_ma,
+    )
+    return success(data=plan, message="Code generation plan ready")
+
+
+@router.get("/templates", summary="List supported test items")
+async def list_templates():
+    knowledge = get_enterprise_code_knowledge_service()
+    digital = knowledge.list_items("digital")
+    analog = knowledge.list_items("ldo")
+    extra = [
+        {"id": key, "name": key, "desc": "Built-in fallback template", "apis": [], "scenarios": ["fallback"]}
+        for key in sorted(set(TEMPLATES.keys()) - {item["id"] for item in digital} - {item["id"] for item in analog})
+    ]
+    return success(
+        data={
+            "digital": digital,
+            "ldo": analog + extra,
+            "knowledge_summary": knowledge.summary(),
+        },
+        message="Supported test items loaded",
     )
 
-    # 验证测试项
-    valid_digital = {"CON","FUN","VIH","VIL","VIK","VOH","VOL","IOS","II","IIN","ICC","TP1","TP2","TP3","TP4"}
-    valid_ldo     = {"LDO_DROPOUT","LDO_ACCURACY","LDO_IQ"}
-    valid_items   = valid_digital | valid_ldo
 
-    unknown = [i for i in req.test_items if i not in valid_items]
-    if unknown:
-        return error(f"未知测试项: {unknown}，支持的测试项: {sorted(valid_items)}", code=400)
-
-    if not req.test_items:
-        return error("至少选择一个测试项", code=400)
-
-    try:
-        result = service.generate(
-            chip_name    = req.chip_name,
-            chip_type    = req.chip_type,
-            test_items   = req.test_items,
-            user_prompt  = req.user_prompt,
-            pin_names    = req.pin_names,
-            input_pins   = req.input_pins,
-            output_pins  = req.output_pins,
-            vcc          = req.vcc,
-            vout         = req.vout,
-            ldo_out_pin  = req.ldo_out_pin,
-            load_ma      = req.load_ma,
-        )
-
-        # P3: 静态代码校验
-        static_analysis = {}
-        try:
-            analysis = validator.validate(result.get("code", ""))
-            static_analysis = analysis.to_dict()
-        except Exception as ve:
-            logger.warning(f"静态校验异常（不影响代码输出）: {ve}")
-
-        result["static_analysis"] = static_analysis
-
-        logger.info(
-            f"✅ 代码生成完成: {result['lines']} 行, "
-            f"{result['functions']} 个测试函数 | "
-            f"校验评分: {static_analysis.get('score', 'N/A')}"
-        )
-        return success(data=result, message="代码生成成功")
-
-    except Exception as e:
-        logger.error(f"❌ 代码生成失败: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return error(f"代码生成失败: {str(e)}", code=500)
-
-
-
-@router.get("/templates", summary="获取支持的测试项列表")
-async def list_templates():
-    """返回所有支持的测试项及其说明"""
-    return success(data={
-        "digital": [
-            {"id": "CON",  "name": "连通性测试",       "desc": "接触电阻/断路检测"},
-            {"id": "FUN",  "name": "功能逻辑测试",     "desc": "运行数字向量验证逻辑"},
-            {"id": "VIH",  "name": "输入高电平阈值",   "desc": "最小 VIH 扫描"},
-            {"id": "VIL",  "name": "输入低电平阈值",   "desc": "最大 VIL 二分法"},
-            {"id": "VOH",  "name": "输出高电平",       "desc": "输出高电平电压"},
-            {"id": "VOL",  "name": "输出低电平",       "desc": "输出低电平电压（双负载）"},
-            {"id": "IOS",  "name": "输出短路电流",     "desc": "输出引脚强制至 0V 测量电流"},
-            {"id": "ICC",  "name": "电源电流",         "desc": "高/低态供电电流"},
-        ],
-        "ldo": [
-            {"id": "LDO_DROPOUT",  "name": "压降测试",     "desc": "逐步降低 VIN 找临界压差"},
-            {"id": "LDO_ACCURACY", "name": "输出精度",     "desc": "空载 VOUT 精度百分比"},
-            {"id": "LDO_IQ",       "name": "静态电流",     "desc": "空载 IQ(uA)测量"},
-        ],
-    }, message="查询成功")
+@router.get("/knowledge", summary="Inspect enterprise code knowledge base")
+async def knowledge_status():
+    knowledge = get_enterprise_code_knowledge_service()
+    return success(data=knowledge.summary(), message="Enterprise code knowledge loaded")

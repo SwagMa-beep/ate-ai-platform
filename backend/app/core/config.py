@@ -54,6 +54,8 @@ class Settings(BaseSettings):
 
     # ========== 前端跨域配置 ==========
     ALLOWED_ORIGINS: list = ["*"]
+    CLEAR_PROXY_ENV: bool = False
+    SSL_VERIFY: bool = True
 
     # ========== 芯片类型识别配置 ==========
     ENABLE_CHIP_TYPE_DETECTION: bool = True
@@ -78,6 +80,20 @@ class Settings(BaseSettings):
         if text in {"0", "false", "no", "off", "release", "prod", "production"}:
             return False
         return False
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def normalize_allowed_origins(cls, value):
+        if isinstance(value, list):
+            return value
+        if value is None:
+            return ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:18080"]
+        text = str(value).strip()
+        if not text:
+            return ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:18080"]
+        if text == "*":
+            return ["*"]
+        return [item.strip() for item in text.split(",") if item.strip()]
 
     def create_dirs(self):
         """创建必要的目录"""

@@ -13,6 +13,13 @@ import uuid
 from datetime import datetime
 
 from app.services.testplan_service import TestPlanService
+from app.services.task_status_store import TaskStatusStore
+from app.services.run_store import get_run_store
+from app.flows.module1_extract_flow import (
+    build_module1_extract_controller,
+    finalize_module1_run,
+    materialize_module1_run_from_result,
+)
 from app.core.config import get_settings
 from app.core.response import success, error, paginate
 from app.utils.logger import setup_logger
@@ -21,9 +28,111 @@ settings = get_settings()
 logger   = setup_logger()
 router   = APIRouter()
 service  = TestPlanService()
+task_store = TaskStatusStore()
+run_store = get_run_store()
+controller = build_module1_extract_controller(service=service)
 
 # 任务状态存储（生产环境用Redis）
 task_status: dict = {}
+
+
+class TaskCancelledError(RuntimeError):
+    """Raised when a user cancels an async extraction task."""
+
+
+def _find_uploaded_file(file_id: str) -> Optional[Path]:
+    files = list(settings.UPLOAD_DIR.glob(f"{file_id}_*"))
+    return files[0] if files else None
+
+
+def _build_task_payload(task_id: str, file_id: str, pages: Optional[str], max_workers: int) -> dict:
+    return {
+        "task_id": task_id,
+        "status": "pending",
+        "progress": 0,
+        "message": "任务已创建，等待执行...",
+        "file_id": file_id,
+        "pages": pages,
+        "max_workers": max_workers,
+        "start_time": datetime.now().isoformat(),
+        "result": None,
+    }
+
+
+def _submit_extract_task(background_tasks: BackgroundTasks, file_id: str, pages: Optional[str], max_workers: int) -> dict:
+    task_id = str(uuid.uuid4())[:8]
+    task_payload = _build_task_payload(task_id, file_id, pages, max_workers)
+    task_status[task_id] = task_payload
+    task_store.set(task_id, task_payload)
+    background_tasks.add_task(
+        _run_extract_task,
+        task_id=task_id,
+        pdf_path=str(_find_uploaded_file(file_id)),
+        pages=pages,
+        max_workers=max_workers,
+    )
+    logger.info(f"Async task submitted: {task_id}")
+    return {
+        "task_id": task_id,
+        "status_url": f"/api/v1/testplan/status/{task_id}",
+        "file_id": file_id,
+    }
+
+
+def _find_uploaded_pdf_or_error(file_id: str) -> tuple[Optional[Path], Optional[dict]]:
+    logger.info(f"Finding file: {file_id}")
+    logger.info(f"Upload dir: {settings.UPLOAD_DIR}")
+    all_files = list(settings.UPLOAD_DIR.glob("*"))
+    logger.info(f"Upload dir files: {[f.name for f in all_files]}")
+    files = list(settings.UPLOAD_DIR.glob(f"{file_id}_*"))
+    logger.info(f"Matched files: {[f.name for f in files]}")
+    if not files:
+        return None, {"message": f"????????? file_id: {file_id}", "code": 404}
+    return files[0], None
+
+
+def run_extract_flow(
+    *,
+    file_id: str,
+    pages: Optional[str],
+    max_workers: int,
+    chip_type: Optional[str] = None,
+) -> tuple[int, dict]:
+    pdf_file, lookup_error = _find_uploaded_pdf_or_error(file_id)
+    if lookup_error:
+        return lookup_error["code"], {
+            "status": "error",
+            "message": lookup_error["message"],
+            "data": None,
+        }
+
+    payload = {
+        "file_id": file_id,
+        "pdf_path": str(pdf_file),
+        "pages": pages,
+        "max_workers": max_workers,
+        "chip_type": chip_type,
+    }
+
+    run = controller.run_flow(flow_name="module1_extract", payload=payload)
+    run_store.save_run(run.to_dict())
+
+    if run.status != "completed":
+        last_step = run.steps[-1] if run.steps else {}
+        http_code = int(last_step.get("metadata", {}).get("http_code", 500))
+        return http_code, {
+            "status": "error",
+            "message": run.errors[-1] if run.errors else "????",
+            "data": {"run": run.to_dict()},
+        }
+
+    return 200, {
+        "status": "success",
+        "message": "????",
+        "data": finalize_module1_run(run, file_id),
+    }
+
+
 
 
 # ============================================================
@@ -98,88 +207,36 @@ async def upload_pdf(
 # 同步提取
 # ============================================================
 
-@router.post("/extract", summary="提取TestPlan（同步）")
+@router.post("/extract", summary="??TestPlan????")
 async def extract_testplan(
-        file_id: str = Query(..., description="上传文件返回的ID"),
-        pages: Optional[str] = Query(None, description="页码范围，如3-9"),
-        max_workers: int = Query(5, description="并发数1-10", ge=1, le=10),
-        chip_type: Optional[str] = Query(None, description="手动指定芯片类型（可选）")
+        file_id: str = Query(..., description="???????ID"),
+        pages: Optional[str] = Query(None, description="??????3-9"),
+        max_workers: int = Query(5, description="???1-10", ge=1, le=10),
+        chip_type: Optional[str] = Query(None, description="????????????")
 ):
-    # ── 查找上传的文件 ────────────────────────────────────
-    logger.info(f"Finding file: {file_id}")
-    logger.info(f"上传目录: {settings.UPLOAD_DIR}")
-
-    # 列出目录下所有文件（调试用）
-    all_files = list(settings.UPLOAD_DIR.glob("*"))
-    logger.info(f"目录下所有文件: {[f.name for f in all_files]}")
-
-    files = list(settings.UPLOAD_DIR.glob(f"{file_id}_*"))
-    logger.info(f"匹配到的文件: {[f.name for f in files]}")
-
-    if not files:
-        return error(f"文件不存在，请检查file_id: {file_id}", code=404)
-
-    pdf_path = str(files[0])
-    logger.info(f"Starting extraction: {files[0].name}")
-
     try:
-        result = service.extract_from_pdf(
-            pdf_path=pdf_path,
+        http_code, outcome = run_extract_flow(
+            file_id=file_id,
             pages=pages,
-            max_workers=max_workers
+            max_workers=max_workers,
+            chip_type=chip_type,
         )
-
-        if result.status == "success":
-            logger.info(f"Extraction success: {result.total_params} params")
-            return success(
-                data={
-                    "chip_name": result.chip_name,
-                    "chip_type": result.chip_type,
-                    "test_scenario": result.test_scenario,
-                    "pin_count": len(result.pin_definitions),
-                    "statistics": {
-                        "total": result.total_params,
-                        "A_class": result.a_params,
-                        "B_class": result.b_params,
-                        "C_class": result.c_params,
-                        "blocked": result.blocked_params,
-                        "dc_items": result.dc_test_items,
-                        "ac_items": result.ac_test_items,
-                        "ldo_items": result.ldo_test_items,
-                    },
-                    "files": {
-                        "excel": f"/api/v1/testplan/download/{file_id}/excel",
-                        "json": f"/api/v1/testplan/download/{file_id}/json",
-                    },
-                    "sts_compatibility": result.sts_compatibility,
-                    "warnings": result.warnings[:5],
-                    "range_recommendations": [
-                        rec if isinstance(rec, dict) else rec.model_dump()
-                        for rec in result.range_recommendations
-                    ],
-                    "pin_definitions": [
-                        p if isinstance(p, dict) else p.model_dump()
-                        for p in result.pin_definitions[:50]
-                    ],
-                },
-                message="提取完成"
+        if outcome["status"] == "success":
+            data = outcome["data"] or {}
+            logger.info(
+                "Extraction success: %s params run=%s",
+                data.get("statistics", {}).get("total", 0),
+                data.get("run", {}).get("run_id"),
             )
-        else:
-            logger.error(f"Extraction failed: {result.errors}")
-            return error(
-                message=f"提取失败: {'; '.join(result.errors)}",
-                code=500
-            )
+            return success(data=data, message=outcome["message"], code=http_code)
+        logger.error(f"Extraction failed: {outcome['message']}")
+        return error(outcome["message"], code=http_code, data=outcome["data"])
 
     except Exception as e:
         logger.error(f"Extraction error: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return error(f"提取过程出错: {str(e)}", code=500)
-
-# ============================================================
-# 异步提取
-# ============================================================
+        return error(f"??????: {str(e)}", code=500)
 
 @router.post("/extract-async", summary="提取TestPlan（异步）")
 async def extract_testplan_async(
@@ -200,39 +257,7 @@ async def extract_testplan_async(
     files = list(settings.UPLOAD_DIR.glob(f"{file_id}_*"))
     if not files:
         return error(f"文件不存在: {file_id}", code=404)
-
-    # 生成任务ID
-    task_id = str(uuid.uuid4())[:8]
-
-    # 初始化任务状态
-    task_status[task_id] = {
-        "status":     "pending",
-        "progress":   0,
-        "message":    "任务已创建，等待执行...",
-        "file_id":    file_id,
-        "start_time": datetime.now().isoformat(),
-        "result":     None
-    }
-
-    # 提交后台任务
-    background_tasks.add_task(
-        _run_extract_task,
-        task_id     = task_id,
-        pdf_path    = str(files[0]),
-        pages       = pages,
-        max_workers = max_workers
-    )
-
-    logger.info(f"Async task submitted: {task_id}")
-
-    return success(
-        data={
-            "task_id":    task_id,
-            "status_url": f"/api/v1/testplan/status/{task_id}",
-            "file_id":    file_id,
-        },
-        message="任务已提交，正在后台处理"
-    )
+    return success(data=_submit_extract_task(background_tasks, file_id, pages, max_workers), message="任务已提交，正在后台处理")
 
 
 def _run_extract_task(
@@ -244,13 +269,18 @@ def _run_extract_task(
     """后台提取任务"""
     try:
         # 更新状态：处理中
-        task_status[task_id].update({
+        updated = {
             "status":   "processing",
             "progress": 5,
             "message":  "正在准备提取环境..."
-        })
+        }
+        task_status[task_id].update(updated)
+        task_store.update(task_id, **updated)
 
         def _progress_cb(current: int, total: int):
+            persisted = task_store.get(task_id) or {}
+            if persisted.get("status") in {"cancelling", "cancelled"}:
+                raise TaskCancelledError("任务已被用户取消")
             # 这里的 current/total 是由 service 传入的 (例如 1/20, 2/20 ...)
             new_prog = int((current / total) * 100)
             task_status[task_id]["progress"] = new_prog
@@ -266,62 +296,75 @@ def _run_extract_task(
                 msg = "正在导出结果并生成报告..."
             
             task_status[task_id]["message"] = msg
+            task_store.update(task_id, progress=new_prog, message=msg)
 
         result = service.extract_from_pdf(pdf_path, pages, max_workers, progress_callback=_progress_cb)
 
         if result.status == "success":
-            task_status[task_id] = {
+            file_id = (task_status.get(task_id) or task_store.get(task_id) or {}).get("file_id", "")
+            run = materialize_module1_run_from_result(
+                file_id=file_id,
+                pages=pages,
+                max_workers=max_workers,
+                result_data=result.model_dump(),
+                status="completed",
+                errors=[],
+                warnings=list(result.warnings or []),
+            )
+            run_store.save_run(run.to_dict())
+            finalized_result = finalize_module1_run(run, file_id)
+            final_payload = {
                 "status":   "completed",
                 "progress": 100,
                 "message":  "提取完成",
+                "file_id": file_id,
+                "start_time": (task_status.get(task_id) or task_store.get(task_id) or {}).get("start_time"),
                 "end_time": datetime.now().isoformat(),
-                "result": {
-                    "chip_name": result.chip_name,
-                    "chip_type": result.chip_type,
-                    "test_scenario": result.test_scenario,
-                    "pin_count": len(result.pin_definitions),
-                    "statistics": {
-                        "total": result.total_params,
-                        "A_class": result.a_params,
-                        "B_class": result.b_params,
-                        "C_class": result.c_params,
-                        "blocked": result.blocked_params,
-                        "dc_items": result.dc_test_items,
-                        "ac_items": result.ac_test_items,
-                        "ldo_items": result.ldo_test_items,
-                    },
-                    "files": {
-                        "excel": f"/api/v1/testplan/download/{task_status[task_id]['file_id']}/excel",
-                        "json": f"/api/v1/testplan/download/{task_status[task_id]['file_id']}/json",
-                    },
-                    "sts_compatibility": result.sts_compatibility,
-                    "warnings": result.warnings[:5],
-                    "range_recommendations": [
-                        rec if isinstance(rec, dict) else rec.model_dump()
-                        for rec in result.range_recommendations
-                    ],
-                    "pin_definitions": [
-                        p if isinstance(p, dict) else p.model_dump()
-                        for p in result.pin_definitions[:50]
-                    ],
-                }
+                "result": finalized_result,
             }
+            task_status[task_id] = final_payload
+            task_store.set(task_id, final_payload)
 
         else:
-            task_status[task_id].update({
+            file_id = (task_status.get(task_id) or task_store.get(task_id) or {}).get("file_id", "")
+            run = materialize_module1_run_from_result(
+                file_id=file_id,
+                pages=pages,
+                max_workers=max_workers,
+                result_data=result.model_dump(),
+                status="failed",
+                errors=list(result.errors or []),
+                warnings=list(result.warnings or []),
+            )
+            run_store.save_run(run.to_dict())
+            updated = {
                 "status":   "failed",
                 "progress": 0,
                 "message":  f"提取失败: {'; '.join(result.errors)}",
                 "end_time": datetime.now().isoformat(),
-            })
+                "result": {"run": run.to_dict()},
+            }
+            task_status[task_id].update(updated)
+            task_store.update(task_id, **updated)
 
+    except TaskCancelledError as e:
+        updated = {
+            "status": "cancelled",
+            "progress": 0,
+            "message": str(e),
+            "end_time": datetime.now().isoformat(),
+        }
+        task_status[task_id].update(updated)
+        task_store.update(task_id, **updated)
     except Exception as e:
-        task_status[task_id].update({
+        updated = {
             "status":   "failed",
             "progress": 0,
             "message":  f"任务出错: {str(e)}",
             "end_time": datetime.now().isoformat(),
-        })
+        }
+        task_status[task_id].update(updated)
+        task_store.update(task_id, **updated)
 
 
 # ============================================================
@@ -340,6 +383,10 @@ async def get_task_status(task_id: str):
     - failed    : 失败
     """
     if task_id not in task_status:
+        persisted = task_store.get(task_id)
+        if persisted:
+            task_status[task_id] = persisted
+    if task_id not in task_status:
         return error(f"任务不存在: {task_id}", code=404)
 
     task = task_status[task_id]
@@ -356,6 +403,65 @@ async def get_task_status(task_id: str):
         },
         message="查询成功"
     )
+
+
+@router.get("/tasks", summary="列出异步提取任务")
+async def list_async_tasks(limit: int = Query(50, ge=1, le=200)):
+    items = task_store.list(limit=limit)
+    for item in items:
+        task_id = item.get("task_id")
+        if task_id:
+            task_status[task_id] = item
+    return success(
+        data={
+            "items": items,
+            "total": len(items),
+        },
+        message="任务列表已加载",
+    )
+
+
+@router.post("/retry/{task_id}", summary="重试异步提取任务")
+async def retry_async_task(task_id: str, background_tasks: BackgroundTasks):
+    task = task_store.get(task_id)
+    if not task:
+        return error(f"任务不存在: {task_id}", code=404)
+    file_id = task.get("file_id")
+    if not file_id or not _find_uploaded_file(file_id):
+        return error(f"任务对应的上传文件不存在: {file_id}", code=404)
+    if task.get("status") in {"processing", "pending"}:
+        return error("任务仍在处理中，不能重试", code=400)
+
+    payload = _submit_extract_task(
+        background_tasks=background_tasks,
+        file_id=file_id,
+        pages=task.get("pages"),
+        max_workers=int(task.get("max_workers", 3)),
+    )
+    return success(data=payload, message="任务已重新提交")
+
+
+@router.post("/cancel/{task_id}", summary="取消异步提取任务")
+async def cancel_async_task(task_id: str):
+    task = task_store.get(task_id)
+    if not task:
+        return error(f"任务不存在: {task_id}", code=404)
+    if task.get("status") in {"completed", "failed", "cancelled"}:
+        return error(f"当前任务状态为 {task.get('status')}，无法取消", code=400)
+    updated = task_store.update(task_id, status="cancelling", message="任务取消中...")
+    task_status[task_id] = updated
+    return success(data={"task_id": task_id, "status": "cancelling"}, message="已请求取消任务")
+
+
+@router.delete("/tasks", summary="清理异步任务记录")
+async def clean_async_tasks(status: Optional[str] = Query(None, description="按状态清理，例如 completed/failed/cancelled")):
+    statuses = {status} if status else {"completed", "failed", "cancelled"}
+    deleted = task_store.prune(statuses=statuses)
+    for task_id in list(task_status.keys()):
+        cached = task_status.get(task_id)
+        if cached and cached.get("status") in statuses:
+            task_status.pop(task_id, None)
+    return success(data={"deleted_count": deleted, "statuses": sorted(statuses)}, message="任务记录已清理")
 
 
 # ============================================================
@@ -599,6 +705,8 @@ async def clean_old_files(
 @router.get("/test-api", summary="测试DeepSeek连通性")
 async def test_api_connection():
     """直接在FastAPI进程内测试DeepSeek连通性"""
+    if not settings.DEBUG:
+        raise HTTPException(status_code=404, detail="Not found")
     import os
     import sys
     import httpx

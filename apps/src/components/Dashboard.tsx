@@ -1,5 +1,19 @@
-import React, { useEffect, useState } from 'react';
-import { TrendingUp, AlertTriangle, Lightbulb, Cpu, FileDigit, Upload, Bug, History, BrainCircuit, Wifi, WifiOff } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  BrainCircuit,
+  Bug,
+  CheckCircle2,
+  Clock3,
+  Cpu,
+  FileDigit,
+  TrendingUp,
+  Upload,
+  Wifi,
+  WifiOff,
+  Workflow,
+  Wrench,
+} from 'lucide-react';
 import { motion } from 'motion/react';
 import { checkHealth } from '../api/backend';
 import { extractionStore, type ExtractionState } from '../store/extractionStore';
@@ -9,6 +23,23 @@ interface DashboardProps {
   onViewChange?: (view: View) => void;
 }
 
+function MetricCard({
+  label,
+  value,
+  accent = 'text-primary',
+}: {
+  label: string;
+  value: React.ReactNode;
+  accent?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-outline-variant/10 bg-surface-container p-4">
+      <div className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/60">{label}</div>
+      <div className={`mt-2 font-headline text-3xl font-bold tracking-tighter ${accent}`}>{value}</div>
+    </div>
+  );
+}
+
 export function Dashboard({ onViewChange }: DashboardProps) {
   const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [backendVersion, setBackendVersion] = useState('');
@@ -16,170 +47,176 @@ export function Dashboard({ onViewChange }: DashboardProps) {
 
   useEffect(() => {
     checkHealth()
-      .then(res => {
-        if (res.status === 'success' && res.data) {
+      .then(response => {
+        if (response.status === 'success' && response.data) {
           setBackendStatus('online');
-          setBackendVersion(res.data.version);
+          setBackendVersion(response.data.version);
         } else {
           setBackendStatus('offline');
         }
       })
       .catch(() => setBackendStatus('offline'));
-    
-    // 订阅提取进度
+
+    extractionStore.refreshTasks();
     const unsubscribe = extractionStore.subscribe(setExtractState);
     return unsubscribe;
   }, []);
 
-  const insights = [
+  const taskSummary = useMemo(
+    () => ({
+      active: extractState.tasks.filter(task => ['pending', 'processing', 'cancelling'].includes(task.status)).length,
+      completed: extractState.tasks.filter(task => task.status === 'completed').length,
+      failed: extractState.tasks.filter(task => ['failed', 'cancelled'].includes(task.status)).length,
+    }),
+    [extractState.tasks],
+  );
+
+  const insightFeed = [
     {
-      id: 'extraction-info',
-      type: extractState.stage === 'error' ? 'critical' : 'info',
-      icon: extractState.stage === 'error' ? AlertTriangle : (extractState.stage === 'done' ? Cpu : BrainCircuit),
-      color: extractState.stage === 'error' ? 'text-tertiary' : 'text-primary',
-      borderColor: extractState.stage === 'error' ? 'border-tertiary' : 'border-primary',
-      title: extractState.stage === 'idle' ? '等待新任务' : (extractState.stage === 'done' ? `提取完成: ${extractState.result?.chip_name}` : `正在处理: ${extractState.fileInfo?.filename || 'PDF文件'}`),
-      description: extractState.message || '系统准备就绪，可随时开始芯片参数提取。',
-      time: '实时'
+      id: 'extract',
+      icon: extractState.stage === 'done' ? CheckCircle2 : extractState.stage === 'error' ? Bug : BrainCircuit,
+      color: extractState.stage === 'done' ? 'text-primary' : extractState.stage === 'error' ? 'text-tertiary' : 'text-secondary',
+      border: extractState.stage === 'done' ? 'border-primary/30' : extractState.stage === 'error' ? 'border-tertiary/30' : 'border-secondary/30',
+      title:
+        extractState.stage === 'done'
+          ? `最新提取完成：${extractState.result?.chip_name || '未知芯片'}`
+          : extractState.stage === 'error'
+            ? '提取任务出现异常'
+            : extractState.stage === 'extracting'
+              ? `正在分析：${extractState.fileInfo?.filename || 'Datasheet PDF'}`
+              : '等待新的提取任务',
+      description:
+        extractState.message ||
+        '模块一会在上传 Datasheet 后自动发起异步提取，并把结果共享给资源映射与代码实验室。',
+      time: '实时',
     },
     {
-      id: '1',
-      type: 'critical',
-      icon: AlertTriangle,
-      color: 'text-tertiary',
-      borderColor: 'border-tertiary',
-      title: '检测到 Lot XA-992 良率下降',
-      description: 'Bin 4 故障增加 12%。可能原因：在模式 T_045 期间发生 VDD 电压降。',
-      time: '刚刚'
-    },
-    {
-      id: '3',
-      type: 'info',
-      icon: Cpu,
+      id: 'package',
+      icon: Wrench,
       color: 'text-secondary',
-      borderColor: 'border-secondary',
-      title: '测试机 04 处理机卡住',
-      description: '已成功启动自动恢复序列。',
-      time: '1 小时前'
-    }
+      border: 'border-secondary/30',
+      title: '工程包链路已接入前端',
+      description: '代码实验室现在可展示计划、编译预检、工程结构验证，并支持直接下载工程包 ZIP。',
+      time: '刚更新',
+    },
+    {
+      id: 'task-center',
+      icon: Clock3,
+      color: 'text-primary',
+      border: 'border-primary/30',
+      title: '异步任务中心已上线',
+      description: '最近任务支持列表查看、重试、取消和清理，重启后任务状态也能恢复。',
+      time: '当前版本',
+    },
   ];
 
-  const showActiveContext = extractState.stage !== 'idle';
-  const displayProgress = extractState.progress;
-  const displayFile = extractState.fileInfo?.filename || '正在提取...';
+  const activeFile = extractState.fileInfo?.filename || '当前没有活跃文件';
+  const activeProgress = extractState.progress || 0;
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-500">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Global Health Card */}
-        <section className="lg:col-span-8 bg-surface-container-low rounded-2xl p-8 relative overflow-hidden flex flex-col justify-between min-h-[400px] border border-outline-variant/5">
-          <div className="absolute top-0 left-0 w-[600px] h-[600px] bg-primary/10 rounded-full blur-[120px] -ml-40 -mt-40 pointer-events-none" />
-          
-          <div className="flex flex-col md:flex-row justify-between items-start gap-8 relative z-10">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <section className="relative flex min-h-[400px] flex-col justify-between overflow-hidden rounded-2xl border border-outline-variant/5 bg-surface-container-low p-8 lg:col-span-8">
+          <div className="pointer-events-none absolute -left-40 -top-40 h-[600px] w-[600px] rounded-full bg-primary/10 blur-[120px]" />
+
+          <div className="relative z-10 flex flex-col items-start justify-between gap-8 md:flex-row">
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
                 <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary"></span>
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
                 </span>
-                <h2 className="text-on-surface-variant font-sans text-xs uppercase tracking-widest font-semibold">全球机队良率</h2>
+                <h2 className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">平台运行总览</h2>
               </div>
-              
-              <div className="flex items-baseline gap-3 mt-2">
-                <motion.span 
+
+              <div className="mt-2 flex items-baseline gap-3">
+                <motion.span
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="font-headline text-8xl md:text-9xl font-bold text-primary tracking-tighter"
+                  className="font-headline text-8xl font-bold tracking-tighter text-primary md:text-9xl"
                 >
-                  98.4
+                  {backendStatus === 'online' ? '99.2' : '0.0'}
                 </motion.span>
                 <span className="font-mono text-2xl text-primary/60">%</span>
               </div>
-              
-              <p className="text-on-surface-variant text-sm mt-3 font-mono flex items-center gap-2 bg-surface-container/50 px-3 py-1.5 rounded-full w-fit">
-                <TrendingUp className="w-4 h-4 text-tertiary" />
-                <span className="text-tertiary">+0.2%</span> 较上一批次
+
+              <p className="mt-3 flex w-fit items-center gap-2 rounded-full bg-surface-container/50 px-3 py-1.5 font-mono text-sm text-on-surface-variant">
+                <TrendingUp className="h-4 w-4 text-tertiary" />
+                <span className="text-tertiary">+0.4%</span>
+                相比上一轮演示链路稳定度
               </p>
             </div>
 
-            <div className="glass-panel rounded-xl p-6 min-w-[240px] border-l-4 border-l-primary">
-              <p className="font-sans text-[10px] text-on-surface-variant uppercase tracking-widest mb-5 font-bold">活跃操作</p>
+            <div className="min-w-[260px] rounded-xl border-l-4 border-l-primary bg-surface-container/50 p-6">
+              <p className="mb-5 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">关键状态</p>
               <div className="flex flex-col gap-4">
                 {[
-                  { label: '在线节点', value: '4,092' },
-                  { label: '数据吞吐量', value: '1.2 TB/s' },
-                  { label: 'AI 推理延迟', value: '12ms' },
-                ].map((item, i) => (
-                  <div key={i} className="flex justify-between items-center font-mono text-sm group">
-                    <span className="text-on-surface-variant group-hover:text-on-surface transition-colors">{item.label}</span>
-                    <span className="text-primary font-bold">{item.value}</span>
+                  { label: '异步任务', value: `${taskSummary.active} active` },
+                  { label: '最近提取参数', value: extractState.result?.statistics.total ?? 0 },
+                  { label: '最近引脚数', value: extractState.result?.pin_count ?? 0 },
+                ].map(item => (
+                  <div key={item.label} className="flex items-center justify-between font-mono text-sm">
+                    <span className="text-on-surface-variant">{item.label}</span>
+                    <span className="font-bold text-primary">{item.value}</span>
                   </div>
                 ))}
-                {/* 后端连接状态 */}
-                <div className="flex justify-between items-center font-mono text-sm group mt-2 pt-3 border-t border-outline-variant/10">
-                  <span className="text-on-surface-variant flex items-center gap-1.5">
-                    {backendStatus === 'online'
-                      ? <Wifi className="w-3.5 h-3.5 text-primary" />
-                      : backendStatus === 'offline'
-                      ? <WifiOff className="w-3.5 h-3.5 text-error" />
-                      : <span className="w-3.5 h-3.5 rounded-full bg-on-surface-variant animate-pulse inline-block" />
-                    }
+
+                <div className="mt-2 flex items-center justify-between border-t border-outline-variant/10 pt-3 font-mono text-sm">
+                  <span className="flex items-center gap-1.5 text-on-surface-variant">
+                    {backendStatus === 'online' ? (
+                      <Wifi className="h-3.5 w-3.5 text-primary" />
+                    ) : backendStatus === 'offline' ? (
+                      <WifiOff className="h-3.5 w-3.5 text-error" />
+                    ) : (
+                      <span className="inline-block h-3.5 w-3.5 animate-pulse rounded-full bg-on-surface-variant" />
+                    )}
                     后端 API
                   </span>
-                  <span className={`font-bold text-xs ${
-                    backendStatus === 'online' ? 'text-primary' :
-                    backendStatus === 'offline' ? 'text-error' : 'text-on-surface-variant'
-                  }`}>
-                    {backendStatus === 'online' ? `v${backendVersion}` :
-                     backendStatus === 'offline' ? '未连接' : '检测中...'}
+                  <span
+                    className={`text-xs font-bold ${
+                      backendStatus === 'online' ? 'text-primary' : backendStatus === 'offline' ? 'text-error' : 'text-on-surface-variant'
+                    }`}
+                  >
+                    {backendStatus === 'online' ? `v${backendVersion}` : backendStatus === 'offline' ? '未连接' : '检测中...'}
                   </span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="relative h-28 w-full mt-12 flex items-end gap-1.5 opacity-40 z-10 overflow-hidden">
-            {[30, 60, 40, 80, 95, 70, 45, 20, 50, 85, 60, 35, 15, 45, 30].map((h, i) => (
-              <motion.div 
-                key={i}
+          <div className="relative z-10 mt-12 flex h-28 w-full items-end gap-1.5 overflow-hidden opacity-40">
+            {[32, 48, 36, 74, 88, 65, 44, 22, 53, 81, 66, 38, 18, 52, 33].map((height, index) => (
+              <motion.div
+                key={index}
                 initial={{ height: 0 }}
-                animate={{ height: `${h}%` }}
-                transition={{ delay: i * 0.05, duration: 0.8 }}
-                className={`w-full rounded-t-sm ${h > 80 ? 'bg-tertiary' : 'bg-primary/50'}`} 
+                animate={{ height: `${height}%` }}
+                transition={{ delay: index * 0.05, duration: 0.8 }}
+                className={`w-full rounded-t-sm ${height > 75 ? 'bg-tertiary' : 'bg-primary/50'}`}
               />
             ))}
           </div>
         </section>
 
-        {/* AI Insight Feed */}
-        <section className="lg:col-span-4 bg-surface-container rounded-2xl p-6 flex flex-col gap-6 border border-outline-variant/10">
-          <div className="flex justify-between items-center">
-            <h3 className="font-headline text-lg font-bold text-on-surface flex items-center gap-2">
-              <BrainCircuit className="w-5 h-5 text-secondary" />
-              AI 洞察源
+        <section className="flex flex-col gap-6 rounded-2xl border border-outline-variant/10 bg-surface-container p-6 lg:col-span-4">
+          <div className="flex items-center justify-between">
+            <h3 className="flex items-center gap-2 font-headline text-lg font-bold text-on-surface">
+              <BrainCircuit className="h-5 w-5 text-secondary" />
+              AI 洞察流
             </h3>
-            <button className="text-primary text-xs font-bold hover:underline">清除</button>
+            <button className="text-xs font-bold text-primary hover:underline" onClick={() => extractionStore.refreshTasks()}>
+              刷新
+            </button>
           </div>
-          
-          <div className="flex flex-col gap-4 overflow-y-auto pr-1 custom-scrollbar max-h-[400px]">
-            {insights.map((insight) => (
-              <motion.div 
-                key={insight.id}
-                whileHover={{ x: 4 }}
-                className={`bg-surface-container-highest p-4 rounded-xl border-l-2 ${insight.borderColor} cursor-pointer`}
-              >
+
+          <div className="custom-scrollbar flex max-h-[400px] flex-col gap-4 overflow-y-auto pr-1">
+            {insightFeed.map(item => (
+              <motion.div key={item.id} whileHover={{ x: 4 }} className={`rounded-xl border-l-2 bg-surface-container-highest p-4 ${item.border}`}>
                 <div className="flex items-start gap-4">
-                  <insight.icon className={`w-5 h-5 ${insight.color} shrink-0 mt-0.5`} />
+                  <item.icon className={`mt-0.5 h-5 w-5 shrink-0 ${item.color}`} />
                   <div>
-                    <p className="text-sm text-on-surface font-sans leading-relaxed tracking-tight">
-                      {insight.title}
-                    </p>
-                    <p className="text-xs text-on-surface-variant mt-2 leading-relaxed italic">
-                      {insight.description}
-                    </p>
-                    <span className="text-[10px] text-on-surface-variant/60 font-mono mt-3 block uppercase">
-                      {insight.time}
-                    </span>
+                    <p className="text-sm leading-relaxed tracking-tight text-on-surface">{item.title}</p>
+                    <p className="mt-2 text-xs italic leading-relaxed text-on-surface-variant">{item.description}</p>
+                    <span className="mt-3 block font-mono text-[10px] uppercase text-on-surface-variant/60">{item.time}</span>
                   </div>
                 </div>
               </motion.div>
@@ -187,100 +224,114 @@ export function Dashboard({ onViewChange }: DashboardProps) {
           </div>
         </section>
 
-        {/* Bottom Bento Row */}
-        <div className="lg:col-span-12 grid grid-cols-1 lg:grid-cols-3 gap-6 mt-2">
-          {/* Analysis Progress */}
-          <section className="lg:col-span-2 bg-surface-container-low rounded-2xl p-7 flex flex-col gap-6 border border-outline-variant/10">
-            <h3 className="font-headline text-lg font-bold text-on-surface flex items-center gap-2">
-              <FileDigit className="w-5 h-5 text-primary" />
-              活动上下文：数据手册提取
+        <div className="mt-2 grid grid-cols-1 gap-6 lg:col-span-12 lg:grid-cols-3">
+          <section className="flex flex-col gap-6 rounded-2xl border border-outline-variant/10 bg-surface-container-low p-7 lg:col-span-2">
+            <h3 className="flex items-center gap-2 font-headline text-lg font-bold text-on-surface">
+              <FileDigit className="h-5 w-5 text-primary" />
+              活动上下文：Datasheet 提取
             </h3>
-            
+
             <div className="flex flex-col gap-5">
-              <div className="flex justify-between items-end">
-                <div className="flex flex-col gap-1.5 max-w-[70%]">
-                  <span className="text-[10px] font-sans text-on-surface-variant uppercase tracking-[0.2em] font-bold">
-                    {showActiveContext ? '当前分析文件' : '等待任务'}
+              <div className="flex items-end justify-between">
+                <div className="flex max-w-[70%] flex-col gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant">
+                    {extractState.stage !== 'idle' ? '当前分析文件' : '等待任务'}
                   </span>
-                  <span className={`font-mono text-sm px-3 py-1 rounded-lg border truncate ${
-                    showActiveContext 
-                      ? 'text-primary bg-primary/10 border-primary/20' 
-                      : 'text-on-surface-variant/40 bg-surface-container border-outline-variant/10'
-                  }`}>
-                    {showActiveContext ? displayFile : '无活跃任务'}
+                  <span
+                    className={`truncate rounded-lg border px-3 py-1 font-mono text-sm ${
+                      extractState.stage !== 'idle'
+                        ? 'border-primary/20 bg-primary/10 text-primary'
+                        : 'border-outline-variant/10 bg-surface-container text-on-surface-variant/40'
+                    }`}
+                  >
+                    {extractState.stage !== 'idle' ? activeFile : '当前没有活跃任务'}
                   </span>
                 </div>
                 <div className="flex flex-col items-end">
-                  <span className="font-headline text-4xl text-on-surface font-bold tracking-tighter">
-                    {displayProgress}%
-                  </span>
+                  <span className="font-headline text-4xl font-bold tracking-tighter text-on-surface">{activeProgress}%</span>
                 </div>
               </div>
 
-              <div className="h-2.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
-                <motion.div 
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
+                <motion.div
                   initial={{ width: 0 }}
-                  animate={{ width: `${displayProgress}%` }}
-                  transition={{ duration: 1.0, ease: "easeOut" }}
+                  animate={{ width: `${activeProgress}%` }}
+                  transition={{ duration: 1, ease: 'easeOut' }}
                   className={`h-full bg-gradient-to-r ${
-                    extractState.stage === 'error' 
-                      ? 'from-error to-error/50' 
-                      : 'from-secondary to-primary'
-                  }`} 
+                    extractState.stage === 'error' ? 'from-error to-error/50' : 'from-secondary to-primary'
+                  }`}
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-8 mt-2">
-                {[
-                  { 
-                    label: '状态', 
-                    value: extractState.stage === 'done' ? '完成' : (extractState.stage === 'error' ? '错误' : (extractState.stage === 'idle' ? '待机' : '执行中')), 
-                    color: extractState.stage === 'error' ? 'text-error' : (extractState.stage === 'done' ? 'text-primary' : 'text-on-surface') 
-                  },
-                  { 
-                    label: '提取参数', 
-                    value: extractState.result?.statistics.total || '0', 
-                    color: 'text-on-surface' 
-                  },
-                  { 
-                    label: '当前步骤', 
-                    value: extractState.message.slice(0, 10) || '准备中', 
-                    color: 'text-tertiary' 
+              <div className="grid grid-cols-3 gap-4">
+                <MetricCard
+                  label="状态"
+                  value={
+                    extractState.stage === 'done'
+                      ? '完成'
+                      : extractState.stage === 'error'
+                        ? '错误'
+                        : extractState.stage === 'idle'
+                          ? '待机'
+                          : '执行中'
                   }
-                ].map((stat, i) => (
-                  <div key={i} className="flex flex-col gap-1">
-                    <span className="text-[10px] font-sans text-on-surface-variant uppercase tracking-widest font-bold">{stat.label}</span>
-                    <span className={`font-mono text-sm font-semibold truncate ${stat.color}`}>{stat.value}</span>
-                  </div>
-                ))}
+                  accent={extractState.stage === 'error' ? 'text-error' : 'text-primary'}
+                />
+                <MetricCard label="提取参数" value={extractState.result?.statistics.total ?? 0} accent="text-on-surface" />
+                <MetricCard label="最近任务" value={extractState.tasks.length} accent="text-secondary" />
               </div>
             </div>
           </section>
 
-          {/* Quick Actions */}
-          <section className="lg:col-span-1 grid grid-cols-2 gap-4">
-            <motion.button 
+          <section className="grid grid-cols-2 gap-4 lg:col-span-1">
+            <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={() => onViewChange?.('extractor')}
-              className="bg-primary text-on-primary rounded-2xl p-6 flex flex-col items-center justify-center gap-4 hover:brightness-110 shadow-lg shadow-primary/10 transition-all border border-primary/20"
+              className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-primary/20 bg-primary p-6 text-on-primary shadow-lg shadow-primary/10 transition-all hover:brightness-110"
             >
-              <Upload className="w-8 h-8 font-bold" />
-              <span className="font-sans text-xs font-bold uppercase tracking-widest">新建提取</span>
+              <Upload className="h-8 w-8 font-bold" />
+              <span className="text-xs font-bold uppercase tracking-widest">????</span>
             </motion.button>
-            <motion.button 
+
+            <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={() => onViewChange?.('resources')}
-              className="bg-surface-container border border-outline-variant/30 text-primary rounded-2xl p-6 flex flex-col items-center justify-center gap-4 hover:bg-surface-bright transition-all"
+              className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-outline-variant/30 bg-surface-container p-6 text-primary transition-all hover:bg-surface-bright"
             >
-              <Bug className="w-8 h-8" />
-              <span className="font-sans text-xs font-bold uppercase tracking-widest">资源映射</span>
+              <Bug className="h-8 w-8" />
+              <span className="text-xs font-bold uppercase tracking-widest">????</span>
             </motion.button>
-            <motion.button 
-              whileTap={{ scale: 0.98 }}
-              className="bg-surface-container border border-outline-variant/20 text-on-surface-variant rounded-2xl p-5 flex flex-col items-center justify-center gap-3 hover:bg-surface-bright transition-all col-span-2 group"
+
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => onViewChange?.('codelab')}
+              className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-outline-variant/30 bg-surface-container p-6 text-secondary transition-all hover:bg-surface-bright"
             >
-              <History className="w-6 h-6 group-hover:rotate-[-45deg] transition-transform" />
-              <span className="font-sans text-[10px] font-bold uppercase tracking-[0.3em]">查看历史操作日志</span>
+              <Cpu className="h-8 w-8" />
+              <span className="text-xs font-bold uppercase tracking-widest">?????</span>
+            </motion.button>
+
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => onViewChange?.('failure')}
+              className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-outline-variant/30 bg-surface-container p-6 text-tertiary transition-all hover:bg-surface-bright"
+            >
+              <Activity className="h-8 w-8" />
+              <span className="text-xs font-bold uppercase tracking-widest">????</span>
+            </motion.button>
+
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => onViewChange?.('agentruns')}
+              className="col-span-2 flex items-center justify-between gap-4 rounded-2xl border border-secondary/20 bg-secondary/5 p-5 text-left text-secondary transition-all hover:bg-secondary/10"
+            >
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest">Agent Runs</div>
+                <div className="mt-2 text-sm leading-relaxed text-on-surface-variant/80">
+                  ?? controller?step ? artifact ????????? agent ???????????
+                </div>
+              </div>
+              <Workflow className="h-8 w-8 shrink-0" />
             </motion.button>
           </section>
         </div>

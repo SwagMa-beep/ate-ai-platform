@@ -1,4 +1,4 @@
-export type View = 'dashboard' | 'extractor' | 'resources' | 'codelab' | 'failure';
+export type View = 'dashboard' | 'extractor' | 'resources' | 'codelab' | 'agentruns' | 'failure';
 
 export interface Insight {
   id: string;

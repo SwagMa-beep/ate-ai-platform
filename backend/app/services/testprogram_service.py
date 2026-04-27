@@ -1,11 +1,12 @@
 """
-Module 3 service.
-Build test-program skeleton artifacts from module 1 and module 2 outputs.
+Module 3 engineering package service.
+Build editable STS8200S project artifacts from module 1/2 outputs and generated code.
 """
 from __future__ import annotations
 
 import json
 import re
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,10 @@ from app.models.testprogram import (
     TestProgramGenerateRequest,
     TestProgramGenerateResult,
 )
+from app.services.engineering_validation_service import EngineeringValidationService
+from app.services.pgs_generation_service import PGSGenerationService
+from app.services.project_template_service import ProjectTemplateService
+from app.services.vector_generation_service import VectorGenerationService
 from app.utils.logger import setup_logger
 
 settings = get_settings()
@@ -25,96 +30,173 @@ logger = setup_logger()
 
 
 class TestProgramService:
-    """Service for module 3 generation flow."""
+    """Service for module 3 engineering package generation."""
+
+    def __init__(self) -> None:
+        self.vector_service = VectorGenerationService()
+        self.pgs_service = PGSGenerationService()
+        self.project_template_service = ProjectTemplateService()
+        self.engineering_validation_service = EngineeringValidationService()
 
     def generate(self, req: TestProgramGenerateRequest) -> TestProgramGenerateResult:
-        """Generate test-program skeleton files from extracted artifacts."""
+        """Generate a baseline engineering package from extracted artifacts only."""
         inputs = self._resolve_inputs(file_id=req.file_id, resource_prefix=req.resource_prefix)
         testplan_data = self._load_json(Path(inputs.testplan_json))
 
         chip_name = self._safe_chip_name(testplan_data.get("chip_name") or "UnknownChip")
         chip_type = str(testplan_data.get("chip_type") or "UNKNOWN")
         functions = self._extract_functions(testplan_data.get("parameters", []))
+        test_cpp = self._build_test_cpp(functions)
+        package = self.export_package(
+            file_id=req.file_id,
+            chip_name=chip_name,
+            chip_type=chip_type,
+            test_items=functions,
+            code=test_cpp,
+            user_prompt="",
+            inputs=inputs,
+            generator_mode=req.generator_mode,
+            source="testprogram",
+            extra_notes=[
+                "PGS and VECDIO auto-generation is planned in next iteration.",
+                "Current output provides a compile-oriented editable skeleton.",
+            ],
+        )
+        return package
 
+    def export_package(
+        self,
+        *,
+        file_id: str,
+        chip_name: str,
+        chip_type: str,
+        test_items: List[str],
+        code: str,
+        user_prompt: str,
+        inputs: Optional[InputArtifacts] = None,
+        generator_mode: str = "engineering_package",
+        source: str = "codegen",
+        extra_notes: Optional[List[str]] = None,
+    ) -> TestProgramGenerateResult:
+        """Write a generated engineering package to processed storage."""
+        resolved_inputs = inputs or self._resolve_inputs(file_id=file_id, resource_prefix=None)
         generation_id = str(uuid.uuid4())[:8]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = settings.PROCESSED_DIR / "generated_programs" / f"{req.file_id}_{timestamp}_{chip_name}"
+        safe_chip_name = self._safe_chip_name(chip_name or "UnknownChip")
+        output_dir = settings.PROCESSED_DIR / "generated_programs" / f"{file_id}_{timestamp}_{safe_chip_name}"
         source_dir = output_dir / "source"
         source_dir.mkdir(parents=True, exist_ok=True)
+        testplan_data = self._load_json(Path(resolved_inputs.testplan_json))
 
-        dll_cpp = source_dir / f"{chip_name}.cpp"
+        dll_cpp = source_dir / f"{safe_chip_name}.cpp"
         test_cpp = source_dir / "test.cpp"
         manifest_json = output_dir / "manifest.json"
         plan_json = output_dir / "codegen_plan.json"
         readme_txt = output_dir / "README.txt"
 
-        dll_cpp.write_text(self._build_dll_cpp(chip_name), encoding="utf-8")
-        test_cpp.write_text(self._build_test_cpp(functions), encoding="utf-8")
-        manifest_json.write_text(
-            json.dumps(
-                {
-                    "generation_id": generation_id,
-                    "created_at": timestamp,
-                    "chip_name": chip_name,
-                    "chip_type": chip_type,
-                    "inputs": inputs.model_dump(),
-                    "outputs": [
-                        str(dll_cpp),
-                        str(test_cpp),
-                        str(plan_json),
-                        str(manifest_json),
-                        str(readme_txt),
-                    ],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        plan_json.write_text(
-            json.dumps(
-                {
-                    "chip_name": chip_name,
-                    "chip_type": chip_type,
-                    "function_count": len(functions),
-                    "functions": functions,
-                    "generator_mode": req.generator_mode,
-                    "notes": [
-                        "This is a skeleton output.",
-                        "Refine hardware settings, limits, and vector flow before production use.",
-                    ],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        readme_txt.write_text(self._build_readme(chip_name, chip_type, functions), encoding="utf-8")
+        dll_cpp.write_text(self._build_dll_cpp(safe_chip_name), encoding="utf-8")
+        test_cpp.write_text(code, encoding="utf-8")
 
-        files = [
-            GeneratedFile(file_type="dll_entry_cpp", path=str(dll_cpp)),
-            GeneratedFile(file_type="test_cpp", path=str(test_cpp)),
-            GeneratedFile(file_type="manifest_json", path=str(manifest_json)),
-            GeneratedFile(file_type="plan_json", path=str(plan_json)),
-            GeneratedFile(file_type="readme_txt", path=str(readme_txt)),
+        generated_files = [
+            self._build_generated_file(output_dir, dll_cpp, "dll_entry_cpp"),
+            self._build_generated_file(output_dir, test_cpp, "test_cpp"),
         ]
 
-        logger.success(f"TestProgram skeleton generated: {output_dir}")
+        plan_payload = {
+            "chip_name": chip_name,
+            "chip_type": chip_type,
+            "function_count": len(test_items),
+            "functions": test_items,
+            "generator_mode": generator_mode,
+            "source": source,
+            "notes": [
+                "Editable engineering package generated from module 1/module 3 artifacts.",
+                "Review hardware settings, limits, vector labels, and resource mapping before production use.",
+            ],
+        }
+        plan_json.write_text(json.dumps(plan_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        readme_txt.write_text(self._build_readme(chip_name, chip_type, test_items), encoding="utf-8")
 
+        generated_files.extend([
+            self._build_generated_file(output_dir, manifest_json, "manifest_json"),
+            self._build_generated_file(output_dir, plan_json, "plan_json"),
+            self._build_generated_file(output_dir, readme_txt, "readme_txt"),
+        ])
+        for file_info in self.project_template_service.build_for_package(
+            output_dir=output_dir,
+            source_dir=source_dir,
+            chip_name=safe_chip_name,
+            chip_type=chip_type,
+        ):
+            generated_files.append(GeneratedFile(**file_info))
+        for file_info in self.vector_service.build_for_package(
+            output_dir=output_dir,
+            chip_name=safe_chip_name,
+            chip_type=chip_type,
+            test_items=test_items,
+            testplan_data=testplan_data,
+        ):
+            generated_files.append(GeneratedFile(**file_info))
+        for file_info in self.pgs_service.build_for_package(
+            output_dir=output_dir,
+            chip_name=safe_chip_name,
+            chip_type=chip_type,
+            test_items=test_items,
+            resource_map_excel=resolved_inputs.resource_map_excel,
+        ):
+            generated_files.append(GeneratedFile(**file_info))
+
+        manifest_payload = {
+            "generation_id": generation_id,
+            "created_at": timestamp,
+            "source": source,
+            "generator_mode": generator_mode,
+            "chip_name": chip_name,
+            "chip_type": chip_type,
+            "test_items": test_items,
+            "user_prompt": user_prompt,
+            "inputs": resolved_inputs.model_dump(),
+            "outputs": [item.relative_path for item in generated_files],
+        }
+        manifest_json.write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        package_validation = self.engineering_validation_service.validate_package(
+            output_dir=output_dir,
+            generated_files=generated_files,
+            chip_name=safe_chip_name,
+        )
+        package_zip = self._build_package_archive(output_dir)
+
+        notes = [
+            "Engineering package exported under data/processed/generated_programs.",
+            "Current package includes editable source files and generation metadata.",
+            "PGS/TestUI starter files are included when enterprise templates or resource-map outputs are available.",
+            "Visual Studio/STS project scaffold is generated from enterprise project templates when available.",
+        ]
+        if extra_notes:
+            notes.extend(extra_notes)
+
+        logger.success(f"Engineering package generated: {output_dir}")
         return TestProgramGenerateResult(
             generation_id=generation_id,
             chip_name=chip_name,
             chip_type=chip_type,
-            generator_mode=req.generator_mode,
+            generator_mode=generator_mode,
             output_dir=str(output_dir),
-            inputs=inputs,
-            generated_files=files,
-            function_count=len(functions),
-            notes=[
-                "PGS and VECDIO auto-generation is planned in next iteration.",
-                "Current output provides a compile-oriented editable skeleton.",
-            ],
+            package_zip=str(package_zip),
+            download_url=f"/api/v1/testprogram/package/{generation_id}/download",
+            inputs=resolved_inputs,
+            generated_files=generated_files,
+            function_count=len(test_items),
+            test_items=test_items,
+            package_validation=package_validation,
+            notes=notes,
         )
+
+    @staticmethod
+    def _build_package_archive(output_dir: Path) -> Path:
+        archive_base = output_dir.parent / output_dir.name
+        archive_path = Path(shutil.make_archive(str(archive_base), "zip", root_dir=output_dir.parent, base_dir=output_dir.name))
+        return archive_path
 
     def _resolve_inputs(self, file_id: str, resource_prefix: Optional[str]) -> InputArtifacts:
         """Resolve module 1/2 artifacts from processed directory."""
@@ -152,9 +234,17 @@ class TestProgramService:
         )
 
     @staticmethod
+    def _build_generated_file(root: Path, path: Path, file_type: str) -> GeneratedFile:
+        return GeneratedFile(
+            file_type=file_type,
+            path=str(path),
+            relative_path=path.relative_to(root).as_posix(),
+        )
+
+    @staticmethod
     def _load_json(path: Path) -> Dict[str, Any]:
-        with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+        with path.open("r", encoding="utf-8") as file:
+            return json.load(file)
 
     @staticmethod
     def _safe_chip_name(name: str) -> str:
@@ -164,11 +254,10 @@ class TestProgramService:
     @staticmethod
     def _extract_functions(parameters: List[Dict[str, Any]]) -> List[str]:
         funcs: List[str] = []
-        for p in parameters:
-            raw = str(p.get("param_name", "")).strip()
+        for parameter in parameters:
+            raw = str(parameter.get("param_name", "")).strip()
             if not raw:
                 continue
-            # Keep function names simple and C identifier friendly.
             fn = re.sub(r"[^0-9A-Za-z_]", "_", raw).upper()
             if fn and fn not in funcs:
                 funcs.append(fn)
@@ -260,13 +349,19 @@ DUT_API void SetupFailSite(const unsigned char*byFailSite)
     def _build_readme(chip_name: str, chip_type: str, functions: List[str]) -> str:
         fn_preview = ", ".join(functions[:20]) if functions else "PLACEHOLDER"
         return (
-            f"Module 3 Generated Skeleton\n"
+            "Module 3 Engineering Package\n"
             f"Chip: {chip_name}\n"
             f"Chip Type: {chip_type}\n"
             f"Function Count: {len(functions)}\n"
             f"Function Preview: {fn_preview}\n\n"
-            f"Next Steps:\n"
-            f"1. Map module 2 resources into instrument setup calls.\n"
-            f"2. Fill per-function measurement and limit logic.\n"
-            f"3. Align function names with PGS entries.\n"
+            "Package Contents:\n"
+            "1. source/test.cpp - editable generated test program\n"
+            "2. source/<chip>.cpp - DLL entry and fixed STS hooks\n"
+            "3. manifest.json - generation metadata\n"
+            "4. codegen_plan.json - function plan and notes\n"
+            "5. README.txt - package guidance\n\n"
+            "Next Steps:\n"
+            "1. Align function names with PGS entries.\n"
+            "2. Add vector files and time sets.\n"
+            "3. Refine hardware mapping, limits, and measurement flow.\n"
         )

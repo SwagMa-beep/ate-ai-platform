@@ -29,6 +29,58 @@ class ResourceMappingService:
     def __init__(self):
         logger.info(" 资源映射服务初始化 [模块二]")
 
+    @staticmethod
+    def _is_power_pin(pin: PinInfo) -> bool:
+        name_up = pin.pin_name.upper()
+        return pin.direction == "PWR" or name_up in {
+            "VCC", "VDD", "V+", "VCCA", "VCCB", "VDDIO", "AVDD", "DVDD", "VIN", "VOUT"
+        }
+
+    @staticmethod
+    def _is_ground_pin(pin: PinInfo) -> bool:
+        name_up = pin.pin_name.upper()
+        return pin.direction == "GND" or name_up in {"GND", "VSS", "AGND", "PGND", "DGND", "EP"}
+
+    @staticmethod
+    def _select_voltage_range(max_voltage: Optional[float], default: str = "卤5V") -> str:
+        if max_voltage is None:
+            return default
+        if max_voltage <= 2:
+            return "卤2V"
+        if max_voltage <= 5.5:
+            return "卤5V"
+        if max_voltage <= 10:
+            return "卤10V"
+        return "卤20V"
+
+    def _build_allocation_warnings(
+        self,
+        pins: List[PinInfo],
+        mappings: List[ResourceMapping],
+        chip_type: str,
+        dual_site: bool,
+    ) -> List[str]:
+        warnings: List[str] = []
+        bidir_count = sum(1 for pin in pins if pin.direction == "BIDIR")
+        power_count = sum(1 for pin in pins if self._is_power_pin(pin))
+        nc_count = sum(1 for mapping in mappings if mapping.resource_type == "NC")
+        high_dio_count = sum(
+            1 for mapping in mappings
+            if mapping.resource_type == "DIO" and mapping.channel_no >= 12
+        )
+
+        if bidir_count:
+            warnings.append(f"检测到 {bidir_count} 个双向引脚，已按 DIO drive+sense 方式分配，请在 PGS/向量中复核方向切换。")
+        if power_count > 1:
+            warnings.append(f"检测到 {power_count} 个电源类引脚，已尝试分配多路 FH/SH，请确认不同 rail 的实际电压和上电时序。")
+        if high_dio_count and chip_type in {"DIGITAL_74", "DIGITAL_54", "DIGITAL_4000", "MEMORY"}:
+            warnings.append(f"数字信号已使用超过 12 路 DIO，当前映射已扩展到第二组通道，共 {high_dio_count} 路位于 DIO12 及以上。")
+        if dual_site:
+            warnings.append("当前启用了双工位模式，请确认适配器和 PGS 中的站点配置与资源分配一致。")
+        if nc_count:
+            warnings.append(f"仍有 {nc_count} 个引脚未完成资源分配，已标记为 NC，请在生成结果中进一步确认。")
+        return warnings
+
     # ============================================================
     # 主入口
     # ============================================================
@@ -67,6 +119,9 @@ class ResourceMappingService:
             resource_mappings = self._allocate_resources(
                 pins, chip_type, adapter_info, dual_site
             )
+            allocation_warnings = self._build_allocation_warnings(
+                pins, resource_mappings, chip_type, dual_site
+            )
 
             # Step4: 生成PGS配置
             pgs_configs, pgs_details = self._generate_pgs_config(
@@ -86,6 +141,7 @@ class ResourceMappingService:
                 pgs_detail_conditions=pgs_details,
                 pin_groups=pin_groups,
                 adapter_info=adapter_info,
+                warnings=allocation_warnings,
             )
 
         except Exception as e:
@@ -251,83 +307,79 @@ class ResourceMappingService:
     def _allocate_digital(
         self, pins: List[PinInfo], adapter: AdapterInfo
     ) -> List[ResourceMapping]:
-        """场景A：数字芯片资源分配"""
+        """?????????????? rail??? IO ???? DIO0-DIO23?"""
         mappings = []
-        dio_idx  = 0
+        dio_idx = 0
+        power_idx = 0
 
         for pin in pins:
-            name_up = pin.pin_name.upper()
-
-            # VCC/VDD → FH0/SH0
-            if pin.direction in {"PWR"} or name_up in {"VCC","VDD","V+"}:
+            if self._is_power_pin(pin):
+                channel_no = min(power_idx, 7)
                 mappings.append(ResourceMapping(
-                    pin_no       = pin.pin_no,
-                    pin_name     = pin.pin_name,
-                    function     = pin.function,
-                    direction    = pin.direction,
-                    sts_resource = "FH0/SH0",
-                    resource_type= "FH_SH",
-                    channel_no   = 0,
-                    force_mode   = "ForceV",
-                    measure_mode = "MeasureI",
-                    voltage_range= "±5V",
-                    current_range= "±100mA",
-                    notes        = "VCC四线开尔文测量，K1继电器(CBIT0)控制通断"
+                    pin_no=pin.pin_no,
+                    pin_name=pin.pin_name,
+                    function=pin.function,
+                    direction=pin.direction,
+                    sts_resource=f"FH{channel_no}/SH{channel_no}",
+                    resource_type="FH_SH",
+                    channel_no=channel_no,
+                    force_mode="ForceV",
+                    measure_mode="MeasureI",
+                    voltage_range=self._select_voltage_range(pin.voltage_max, "?5V"),
+                    current_range="?100mA",
+                    notes=f"{pin.pin_name} ?? rail???? FH{channel_no}/SH{channel_no}",
                 ))
+                power_idx += 1
+                continue
 
-            # GND → GND轨
-            elif pin.direction == "GND" or name_up in {"GND","VSS","AGND"}:
+            if self._is_ground_pin(pin):
                 mappings.append(ResourceMapping(
-                    pin_no       = pin.pin_no,
-                    pin_name     = pin.pin_name,
-                    function     = pin.function,
-                    direction    = pin.direction,
-                    sts_resource = "GND",
-                    resource_type= "GND",
-                    channel_no   = -1,
-                    force_mode   = "",
-                    measure_mode = "",
-                    voltage_range= "",
-                    current_range= "",
-                    notes        = "接地引脚，连接AGND"
+                    pin_no=pin.pin_no,
+                    pin_name=pin.pin_name,
+                    function=pin.function,
+                    direction=pin.direction,
+                    sts_resource="GND",
+                    resource_type="GND",
+                    channel_no=-1,
+                    force_mode="",
+                    measure_mode="",
+                    voltage_range="",
+                    current_range="",
+                    notes="???????? GND",
                 ))
+                continue
 
-            # 信号引脚 → DIO
-            elif dio_idx < 12:
+            if dio_idx < 24:
+                is_bidir = pin.direction == "BIDIR"
+                site = 1 if dio_idx < 12 else 2
                 mappings.append(ResourceMapping(
-                    pin_no       = pin.pin_no,
-                    pin_name     = pin.pin_name,
-                    function     = pin.function,
-                    direction    = pin.direction,
-                    sts_resource = f"DIO{dio_idx}",
-                    resource_type= "DIO",
-                    channel_no   = dio_idx,
-                    force_mode   = "DIO_Drive" if pin.direction == "IN" else "",
-                    measure_mode = "DIO_Sense" if pin.direction == "OUT" else "",
-                    voltage_range= "-1.5V~6.5V",
-                    current_range= "",
-                    notes        = (
-                        f"引脚{pin.pin_no}({pin.pin_name}) → DIO{dio_idx}，"
-                        f"经BUF634缓冲后连接TMUA/TMUB"
-                        if pin.direction == "OUT" else
-                        f"引脚{pin.pin_no}({pin.pin_name}) → DIO{dio_idx}"
-                    )
+                    pin_no=pin.pin_no,
+                    pin_name=pin.pin_name,
+                    function=pin.function,
+                    direction=pin.direction,
+                    sts_resource=f"DIO{dio_idx}",
+                    resource_type="DIO",
+                    channel_no=dio_idx,
+                    force_mode="DIO_Drive" if pin.direction in {"IN", "BIDIR"} else "",
+                    measure_mode="DIO_Sense" if pin.direction in {"OUT", "BIDIR"} else "",
+                    voltage_range="-1.5V~6.5V",
+                    current_range="",
+                    notes=f"??{pin.pin_no}({pin.pin_name}) -> DIO{dio_idx}?SITE{site}" + ("??????? drive+sense" if is_bidir else ""),
                 ))
                 dio_idx += 1
-            else:
-                logger.warning(
-                    f"⚠️ 引脚 {pin.pin_no}({pin.pin_name}) DIO通道已满，标记为NC"
-                )
-                mappings.append(ResourceMapping(
-                    pin_no       = pin.pin_no,
-                    pin_name     = pin.pin_name,
-                    function     = pin.function,
-                    direction    = pin.direction,
-                    sts_resource = "NC",
-                    resource_type= "NC",
-                    channel_no   = -1,
-                    notes        = "DIO通道已满，此引脚未连接"
-                ))
+                continue
+
+            logger.warning(f"DIO channel exhausted for pin {pin.pin_no}({pin.pin_name}), mark as NC")
+            mappings.append(ResourceMapping(
+                pin_no=pin.pin_no,
+                pin_name=pin.pin_name,
+                function=pin.function,
+                direction=pin.direction,
+                sts_resource="NC",
+                resource_type="NC",
+                channel_no=-1,
+                notes="DIO ?????????????",
+            ))
 
         return mappings
 
@@ -607,36 +659,71 @@ class ResourceMappingService:
     def _allocate_general(
         self, pins: List[PinInfo], adapter: AdapterInfo
     ) -> List[ResourceMapping]:
-        """通用分配（未知芯片类型）"""
+        """??????????????? rail ? BIDIR ???"""
         mappings = []
         fh_idx = 0
+        dio_idx = 0
 
         for pin in pins:
-            name_up = pin.pin_name.upper()
+            if self._is_ground_pin(pin):
+                mappings.append(ResourceMapping(
+                    pin_no=pin.pin_no,
+                    pin_name=pin.pin_name,
+                    function=pin.function,
+                    direction=pin.direction,
+                    sts_resource="AGND",
+                    resource_type="GND",
+                    channel_no=-1,
+                    notes="??????????",
+                ))
+                continue
 
-            if pin.direction == "GND" or name_up in {"GND","VSS","AGND"}:
-                res = "AGND"
-                rtype = "GND"
-                notes = "地引脚"
-            elif pin.direction == "PWR" or name_up in {"VCC","VDD","VIN","VOUT"}:
-                res   = f"FH{fh_idx}/SH{fh_idx}"
-                rtype = "FH_SH"
-                notes = f"电源/信号引脚，分配FH{fh_idx}/SH{fh_idx}"
-                fh_idx = min(fh_idx + 1, 7)
-            else:
-                res   = "NC"
-                rtype = "NC"
-                notes = "请手动分配资源"
+            if self._is_power_pin(pin):
+                channel_no = min(fh_idx, 7)
+                mappings.append(ResourceMapping(
+                    pin_no=pin.pin_no,
+                    pin_name=pin.pin_name,
+                    function=pin.function,
+                    direction=pin.direction,
+                    sts_resource=f"FH{channel_no}/SH{channel_no}",
+                    resource_type="FH_SH",
+                    channel_no=channel_no,
+                    force_mode="ForceV",
+                    measure_mode="MeasureI",
+                    voltage_range=self._select_voltage_range(pin.voltage_max, "?10V"),
+                    current_range="?100mA",
+                    notes=f"???? rail???? FH{channel_no}/SH{channel_no}",
+                ))
+                fh_idx += 1
+                continue
+
+            if pin.direction in {"IN", "OUT", "BIDIR"} and dio_idx < 24:
+                mappings.append(ResourceMapping(
+                    pin_no=pin.pin_no,
+                    pin_name=pin.pin_name,
+                    function=pin.function,
+                    direction=pin.direction,
+                    sts_resource=f"DIO{dio_idx}",
+                    resource_type="DIO",
+                    channel_no=dio_idx,
+                    force_mode="DIO_Drive" if pin.direction in {"IN", "BIDIR"} else "",
+                    measure_mode="DIO_Sense" if pin.direction in {"OUT", "BIDIR"} else "",
+                    voltage_range="-1.5V~6.5V",
+                    current_range="",
+                    notes="????/???????? PGS ??????????",
+                ))
+                dio_idx += 1
+                continue
 
             mappings.append(ResourceMapping(
-                pin_no       = pin.pin_no,
-                pin_name     = pin.pin_name,
-                function     = pin.function,
-                direction    = pin.direction,
-                sts_resource = res,
-                resource_type= rtype,
-                channel_no   = fh_idx - 1 if rtype == "FH_SH" else -1,
-                notes        = notes
+                pin_no=pin.pin_no,
+                pin_name=pin.pin_name,
+                function=pin.function,
+                direction=pin.direction,
+                sts_resource="NC",
+                resource_type="NC",
+                channel_no=-1,
+                notes="?????????????????",
             ))
 
         return mappings

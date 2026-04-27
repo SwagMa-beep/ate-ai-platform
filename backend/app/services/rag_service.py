@@ -384,7 +384,7 @@ class RAGService:
         if self._client is None:
             http_client = httpx.Client(
                 timeout=httpx.Timeout(connect=30, read=120, write=30, pool=30),
-                verify=False,
+                verify=settings.SSL_VERIFY,
             )
             self._client = OpenAI(
                 api_key     = settings.DEEPSEEK_API_KEY,

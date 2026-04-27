@@ -34,6 +34,7 @@ class GeneratedFile(BaseModel):
 
     file_type: str
     path: str
+    relative_path: str = ""
 
 
 class TestProgramGenerateResult(BaseModel):
@@ -44,7 +45,11 @@ class TestProgramGenerateResult(BaseModel):
     chip_type: str
     generator_mode: str
     output_dir: str
+    package_zip: Optional[str] = None
+    download_url: Optional[str] = None
     inputs: InputArtifacts
     generated_files: List[GeneratedFile] = Field(default_factory=list)
     function_count: int = 0
+    test_items: List[str] = Field(default_factory=list)
+    package_validation: dict = Field(default_factory=dict)
     notes: List[str] = Field(default_factory=list)

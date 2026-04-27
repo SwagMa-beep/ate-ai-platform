@@ -84,15 +84,15 @@ class LLMExtractor:
                 "DEEPSEEK_API_KEY未配置，请检查backend/.env文件"
             )
 
-        # 清除代理环境变量
-        for proxy_var in [
-            "HTTP_PROXY", "HTTPS_PROXY",
-            "http_proxy", "https_proxy",
-            "ALL_PROXY", "all_proxy"
-        ]:
-            if proxy_var in os.environ:
-                logger.info(f"Cleanup proxy: {proxy_var}")
-                del os.environ[proxy_var]
+        if settings.CLEAR_PROXY_ENV:
+            for proxy_var in [
+                "HTTP_PROXY", "HTTPS_PROXY",
+                "http_proxy", "https_proxy",
+                "ALL_PROXY", "all_proxy"
+            ]:
+                if proxy_var in os.environ:
+                    logger.info(f"Cleanup proxy: {proxy_var}")
+                    del os.environ[proxy_var]
 
         # 自定义httpx客户端，解决SSL握手超时问题
         http_client = httpx.Client(
@@ -107,7 +107,7 @@ class LLMExtractor:
                 max_keepalive_connections=10,
                 keepalive_expiry=30.0
             ),
-            verify=False  # 关闭SSL验证，解决握手超时
+            verify=settings.SSL_VERIFY
         )
         self.raw_client = OpenAI(
             api_key=settings.DEEPSEEK_API_KEY,
@@ -131,7 +131,7 @@ class LLMExtractor:
                     max_keepalive_connections=10,
                     keepalive_expiry=30.0
                 ),
-                verify=False
+                verify=settings.SSL_VERIFY
             ),
             timeout=LLM_READ_TIMEOUT_SECONDS,
             max_retries=LLM_MAX_RETRIES,
