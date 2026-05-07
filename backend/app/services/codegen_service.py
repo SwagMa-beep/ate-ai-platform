@@ -692,6 +692,7 @@ class CodegenService:
                         chip_name=chip_name,
                         chip_type=chip_type,
                         skeleton_code=skeleton_code,
+                        test_items=test_items,
                         extra_context=(
                             f"Chip params: VCC={vcc}V, VOUT={vout}V\n\n"
                             + "\n\n".join(

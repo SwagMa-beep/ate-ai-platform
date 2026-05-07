@@ -169,7 +169,7 @@ async def generate_resource_map(
         pin_auto_loaded=len(pin_defs_raw) > 0,
         summary=summary,
     )
-    logger.success(f"Resource mapping finished | adapter={finalized.get('adapter', "")}")
+    logger.success(f"Resource mapping finished | adapter={finalized.get('adapter', '')}")
     return {
         "status": "success",
         "message": "????????",

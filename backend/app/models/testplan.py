@@ -476,6 +476,10 @@ class ExtractionResult(BaseModel):
         default_factory=list,
         description="自动提取的引脚定义列表"
     )
+    parameters: List[DCParam] = Field(
+        default_factory=list,
+        description="提取到的参数列表"
+    )
     # 新增：量程推荐
     range_recommendations: List[RangeRecommendation] = Field(
         default_factory=list,

@@ -2,6 +2,8 @@
 TestProgram API endpoints - module 3.
 Generate test-program skeleton from module 1 and module 2 artifacts.
 """
+from __future__ import annotations
+
 import json
 from pathlib import Path
 

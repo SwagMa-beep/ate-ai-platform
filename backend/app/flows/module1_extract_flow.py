@@ -149,6 +149,7 @@ def materialize_module1_run_from_result(
             "errors": [],
             "artifacts": [
                 {
+                    "name": "source_pdf",
                     "type": "source_pdf",
                     "summary": {
                         "file_id": file_id,
@@ -166,6 +167,7 @@ def materialize_module1_run_from_result(
             "errors": list(errors or []),
             "artifacts": [
                 {
+                    "name": "testplan_result",
                     "type": "testplan_result",
                     "summary": {
                         "chip_name": result_data.get("chip_name", ""),

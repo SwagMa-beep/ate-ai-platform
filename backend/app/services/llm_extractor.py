@@ -234,7 +234,11 @@ class LLMExtractor:
                     pin[field] = str(pin.get(field)).strip()
 
             direction = str(pin.get("direction") or "IN").strip().upper()
-            pin["direction"] = direction if direction in VALID_PIN_DIRECTIONS else "IN"
+            normalized_direction = direction if direction in VALID_PIN_DIRECTIONS else "IN"
+            inferred_direction = cls._infer_pin_direction_from_name(pin.get("pin_name", ""))
+            if normalized_direction == "IN" and inferred_direction in {"PWR", "GND", "OUT", "NC"}:
+                normalized_direction = inferred_direction
+            pin["direction"] = normalized_direction
             for field in NUMERIC_FIELDS:
                 if field in pin:
                     pin[field] = cls._empty_to_none(pin[field])
@@ -242,6 +246,21 @@ class LLMExtractor:
             normalized["pin_definitions"].append(pin)
 
         return normalized
+
+    @staticmethod
+    def _infer_pin_direction_from_name(pin_name: str) -> str:
+        name = re.sub(r"[^A-Z0-9+/._-]", "", str(pin_name or "").upper())
+        if not name:
+            return "IN"
+        if any(token in name for token in {"GND", "GROUND", "AGND", "DGND", "PGND", "SGND", "VSS", "VEE", "SUBGND"}):
+            return "GND"
+        if any(token in name for token in {"VCC", "VDD", "VIN", "AVDD", "DVDD", "PVDD", "VPP", "VBAT", "VS", "V+", "VREG", "VPOS"}):
+            return "PWR"
+        if name in {"NC", "N.C."}:
+            return "NC"
+        if "OUT" in name or name.endswith(("VO", "VOUT", "Y", "Q")):
+            return "OUT"
+        return "IN"
 
     def _create_structured_plan(self, prompt: str, max_tokens: int = EXTRACTION_MAX_TOKENS) -> TestPlan:
         """Use plain chat completion + JSON parsing to avoid instructor/function-call incompatibility."""

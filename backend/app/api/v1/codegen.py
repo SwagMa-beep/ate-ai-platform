@@ -21,6 +21,7 @@ from app.services.codegen_planner_service import CodegenPlannerService
 from app.services.codegen_service import CodegenService, TEMPLATES
 from app.services.compile_validation_service import CompileValidationService
 from app.services.enterprise_code_knowledge import get_enterprise_code_knowledge_service
+from app.services.review_service import ReviewService
 from app.services.run_store import get_run_store
 from app.services.testprogram_service import TestProgramService
 from app.utils.logger import setup_logger
@@ -41,6 +42,7 @@ controller = build_module3_codegen_controller(
     static_validator=validator,
     compile_validator=compile_validator,
     testprogram_service=testprogram_service,
+    review_service=ReviewService(),
 )
 
 
@@ -165,7 +167,7 @@ def run_codegen_flow(req: CodegenRequest) -> tuple[int, dict]:
     )
     run_store.save_run(run.to_dict())
 
-    if run.status != "completed":
+    if run.status not in {"completed", "human_review_required", "warning"}:
         last_step = run.steps[-1] if run.steps else {}
         http_code = int(last_step.get("metadata", {}).get("http_code", 500))
         failure_kind = last_step.get("metadata", {}).get("failure_kind")

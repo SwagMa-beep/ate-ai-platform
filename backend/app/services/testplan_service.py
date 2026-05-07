@@ -21,7 +21,7 @@ from app.utils.logger import setup_logger
 
 settings = get_settings()
 logger = setup_logger()
-CACHE_VERSION = "testplan-v3-local-ratings-fastpath"
+CACHE_VERSION = "testplan-v4-parameters-persisted"
 
 # 参数白名单常量
 DIGITAL_DC_PARAMS_SET = {
@@ -110,6 +110,13 @@ class TestPlanService:
                     errors=["未解析到任何有效页面，请检查PDF文件或页码范围"]
                 )
 
+            source_doc_issue = self._detect_non_datasheet_document(chunks)
+            if source_doc_issue:
+                return ExtractionResult(
+                    status="error",
+                    errors=[source_doc_issue]
+                )
+
             # ── Step 2: 识别芯片类型 ───────────────────────
             self._print_step(2, 5, "识别芯片类型")
             step_t0 = time.perf_counter()
@@ -159,6 +166,13 @@ class TestPlanService:
             all_params, llm_pins = self.llm_extractor.extract_parallel(
                 llm_chunks, chip_type, max_workers, progress_callback=_llm_progress_update
             )
+            if not all_params and llm_chunks != chunks:
+                logger.warning(
+                    "Filtered-page extraction returned no parameters; retrying with full PDF context."
+                )
+                all_params, llm_pins = self.llm_extractor.extract_parallel(
+                    chunks, chip_type, max_workers, progress_callback=_llm_progress_update
+                )
             all_params = self._merge_missing_local_params(all_params, local_params)
             pin_map = {pin.pin_no: pin for pin in local_pins}
             for pin in llm_pins:
@@ -272,6 +286,17 @@ class TestPlanService:
             )
 
             validation = self.validator.get_validation_summary(df)
+            blocked_warning = None
+            if len(df_blocked) > 0:
+                blocked_warning = (
+                    f"已拦截 {len(df_blocked)} 条无效参数，请复核空值行、上下限和单位。"
+                )
+            validation_messages = self._summarize_validation_messages(
+                validation.errors,
+                validation.warnings,
+                validation.sts_warnings,
+                blocked_warning=blocked_warning,
+            )
             logger.info(f"[perf] total: {time.perf_counter() - total_t0:.2f}s")
             self._save_cached_result(cache_key, excel_path, json_path)
 
@@ -290,12 +315,11 @@ class TestPlanService:
                 ldo_test_items  = ldo_items,
                 excel_path      = str(excel_path),
                 json_path       = str(json_path),
-                errors          = validation.errors[:10],
-                warnings        = (
-                    validation.warnings + validation.sts_warnings
-                )[:10],
+                errors          = [],
+                warnings        = validation_messages[:10],
                 sts_compatibility = sts_report,
                 pin_definitions   = all_pins,
+                parameters        = all_params,
                 range_recommendations = self._generate_range_recommendations(df, chip_type),
             )
 
@@ -311,6 +335,30 @@ class TestPlanService:
     # ----------------------------------------------------------
     # 私有辅助方法
     # ----------------------------------------------------------
+
+    @staticmethod
+    def _detect_non_datasheet_document(chunks: List[Dict]) -> Optional[str]:
+        combined = "\n".join((chunk.get("content", "") or "")[:1200] for chunk in chunks[:6]).lower()
+
+        manual_markers = [
+            "使用指南", "用户手册", "操作说明", "目录", "工程新建", "测试前准备",
+            "软件示波器", "工作站 a", "testui", "控制平台", "模板新建工程",
+        ]
+        datasheet_markers = [
+            "electrical characteristics", "absolute maximum ratings",
+            "recommended operating conditions", "switching characteristics",
+            "pin configuration", "pin arrangement", "datasheet",
+            "电气特性", "绝对最大", "推荐工作条件", "引脚配置", "引脚说明",
+        ]
+
+        manual_hits = sum(1 for marker in manual_markers if marker in combined)
+        datasheet_hits = sum(1 for marker in datasheet_markers if marker in combined)
+
+        if "sts8200s 使用指南" in combined and datasheet_hits == 0:
+            return "当前上传文件是 STS8200S 平台使用指南，不是芯片 Datasheet，无法提取芯片测试参数。请上传待测芯片的 Datasheet PDF。"
+        if manual_hits >= 3 and datasheet_hits == 0:
+            return "当前上传文件更像操作手册/平台说明，而不是芯片 Datasheet，无法提取测试参数。请上传待测芯片的 Datasheet PDF。"
+        return None
 
     @staticmethod
     def _get_scenario_name(chip_type: str) -> str:
@@ -365,6 +413,10 @@ class TestPlanService:
             PinDefinition.model_validate(pin)
             for pin in data.get("pin_definitions", [])
         ]
+        parameters = [
+            DCParam.model_validate(param)
+            for param in data.get("parameters", [])
+        ]
         chip_type = data.get("chip_type", "UNKNOWN")
 
         logger.info(f"Cache hit: {cache_key[:12]}")
@@ -385,6 +437,7 @@ class TestPlanService:
             json_path=str(json_path),
             sts_compatibility=data.get("sts_report", {}),
             pin_definitions=pins,
+            parameters=parameters,
         )
 
     @staticmethod
@@ -449,6 +502,52 @@ class TestPlanService:
                 "  → 提取: A/B/C三类参数 + 引脚定义",
         }
         logger.info(info_map.get(chip_type, f"芯片类型: {chip_type}"))
+
+    @staticmethod
+    def _summarize_validation_messages(
+        blocked_errors: List[str],
+        review_warnings: List[str],
+        sts_warnings: List[str],
+        *,
+        blocked_warning: Optional[str] = None,
+    ) -> List[str]:
+        messages: List[str] = []
+        if blocked_warning:
+            messages.append(blocked_warning)
+
+        seen: set[str] = set()
+        for raw in [*review_warnings, *sts_warnings]:
+            text = " ".join(str(raw or "").split()).strip(" ;")
+            if not text:
+                continue
+            if text not in seen:
+                seen.add(text)
+                messages.append(text)
+
+        collapsed = {
+            "无任何数值": 0,
+            "下限大于上限": 0,
+        }
+        for raw in blocked_errors:
+            text = str(raw or "")
+            if "无任何数值" in text:
+                collapsed["无任何数值"] += 1
+            elif "下限大于上限" in text:
+                collapsed["下限大于上限"] += 1
+
+        if collapsed["无任何数值"]:
+            messages.append(f"{collapsed['无任何数值']} 条参数因无有效数值被拦截。")
+        if collapsed["下限大于上限"]:
+            messages.append(f"{collapsed['下限大于上限']} 条参数因下限大于上限被拦截。")
+
+        deduped: List[str] = []
+        used: set[str] = set()
+        for item in messages:
+            normalized = item.strip()
+            if normalized and normalized not in used:
+                used.add(normalized)
+                deduped.append(normalized)
+        return deduped
 
     @staticmethod
     def _filter_and_batch_chunks(chunks: List[Dict]) -> List[Dict]:
@@ -650,13 +749,18 @@ class TestPlanService:
 
     @staticmethod
     def _pin_direction(pin_name: str) -> str:
-        name = pin_name.upper()
-        if name in {"VCC", "VDD", "VSS", "VEE"}:
-            return "PWR" if name in {"VCC", "VDD"} else "GND"
-        if name in {"GND", "GROUND"}:
+        name = re.sub(r"[^A-Z0-9+/._-]", "", str(pin_name or "").upper())
+        if not name:
+            return "IN"
+
+        if any(token in name for token in {"GND", "GROUND", "AGND", "DGND", "PGND", "SGND", "VSS", "VEE", "SUBGND"}):
             return "GND"
+        if any(token in name for token in {"VCC", "VDD", "VIN", "AVDD", "DVDD", "PVDD", "VPP", "VBAT", "VS", "V+", "VREG", "VPOS"}):
+            return "PWR"
         if name in {"NC", "N.C."}:
             return "NC"
+        if "OUT" in name or name.endswith(("VO", "VOUT")):
+            return "OUT"
         if name.endswith(("Y", "Q", "OUT")):
             return "OUT"
         return "IN"
