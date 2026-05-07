@@ -1,39 +1,47 @@
 # ATE AI Platform
 
-面向 ATE 测试开发场景的工程平台。项目围绕 `Datasheet -> TestPlan -> 资源映射 -> 测试代码 -> 工程包 -> 工程复核` 主链路，提供资料提取、STS8200S 资源映射、RAG 增强代码生成、统一运行中心和 Agent 工作台能力。
+面向 ATE 测试开发场景的工程平台。
 
-当前版本已经不只是单个模块工具集合，而是具备了一条可运行的 `full_ate_development` Agent Flow，用于把分散的模块能力串成一条完整的开发闭环。
+项目围绕 `Datasheet -> TestPlan -> 资源映射 -> 测试代码 -> 工程复核 -> 工程包` 主链路，提供资料提取、`STS8200S` 资源映射、RAG 增强代码生成、统一运行中心、Agent 工作台和工程师助手能力。
 
-## 1. 当前版本能做什么
+当前版本已经不是几个独立工具页的集合，而是具备一条可运行的 `full_ate_development` Agent Flow，用于把分散模块串成完整开发闭环。
+
+## 1. 当前版本能力
 
 ### 核心业务能力
 
-- `Datasheet / TestPlan 提取`
+- `Datasheet / TestPlan`
   - 上传 PDF
   - 提取芯片类型、参数表、引脚定义、测试场景
-  - 导出 Excel / JSON
-  - 支持缓存复用、参数持久化、引脚方向归一化
+  - 导出 `Excel / JSON`
+  - 支持缓存复用、参数持久化和引脚方向归一化
 
 - `STS8200S 资源映射`
   - 基于提取结果生成资源映射
-  - 输出 PGS、BOM、SVG 等交付物
+  - 输出 `PGS / BOM / SVG`
   - 支持单工位和双工位配置
 
 - `RAG 测试代码生成`
-  - 基于测试项、企业知识库和 STS8200S 内置知识进行增强生成
+  - 基于测试项、企业知识库和 `STS8200S` 内置知识进行增强生成
   - 生成测试规划、测试代码、静态检查结果和编译预检结果
   - 支持工程包导出
 
 - `ATE Agent 工作台`
   - 发起完整 `full_ate_development` 流程
-  - 查看动态执行过程、Thinking Feed、阶段耗时
-  - 查看 review 结论、批准后交付物和中间 artifacts
+  - 查看动态执行过程、`Thinking Feed`、阶段耗时
+  - 查看 `review` 结论、批准后交付物和中间 `artifacts`
 
 - `Agent 运行中心`
   - 查看最近运行记录
   - 查看 `run / step / artifact`
-  - 查看批准、打回、后续 continuation run
+  - 查看批准、打回和后续 `continuation run`
   - 支持清空运行记录
+
+- `工程师助手`
+  - 统一的测试 AI 助手入口
+  - 读取最近运行、工作区记忆和本地知识片段
+  - 支持文本问答
+  - 已接入图片问答接口；配置视觉模型后可启用多模态分析
 
 - `良率诊断`
   - 提供诊断页与波形/异常分析展示能力
@@ -59,36 +67,36 @@
   - `post_review_delivery`
   - `post_review_revision`
 
-## 2. 平台当前的真实定位
+## 2. 当前平台定位
 
-这套平台现在更准确的定位是：
+这套平台当前更准确的定位是：
 
 **ATE 开发辅助与交付平台**
 
-而不是：
+不是：
 
 **批准后自动控制 STS8200S 真机执行测试的平台**
 
 也就是说，当前版本最核心的价值是：
 
-- 帮工程师从 Datasheet 走到结构化 TestPlan
+- 帮工程师从 `Datasheet` 走到结构化 `TestPlan`
 - 帮工程师生成资源映射和测试代码初稿
-- 帮工程师整理 review 结果、风险结论和交付包
+- 帮工程师整理 `review` 结果、风险结论和交付包
 
-批准后，系统现在会进入“交付整理”阶段，输出：
+批准后，系统当前会进入“交付整理”阶段，输出：
 
 - 代码类产物
 - 资源映射类产物
-- review summary
-- bench checklist
-- final package 信息
+- `review summary`
+- `bench checklist`
+- `final package` 信息
 
-但当前版本**不会**：
+当前版本**不会**：
 
 - 自动装载程序到 ATE
-- 自动连接 STS8200S 机台
+- 自动连接 `STS8200S` 机台
 - 自动执行真实硬件测试
-- 自动采集 DUT 测试结果
+- 自动采集 DUT 实测结果
 
 ## 3. Full ATE Development Flow
 
@@ -106,18 +114,36 @@
 10. 工程复核
 11. 工程打包
 
-这个流程已经接入统一 `AgentController`，并且会将每一步的状态、时间、警告、错误和产物写入 run 记录。
+这个流程已经接入统一 `AgentController`，并且会把每一步的状态、时间、警告、错误和产物写入运行记录。
 
-## 4. 当前前端体验特性
+## 4. 工程师助手
 
-- 左侧导航支持折叠、悬停临时展开和状态记忆
-- Agent 工作台支持动态时间线和 Thinking Feed
-- Thinking Feed 在运行中展开，完成后自动折叠
-- 资源映射页和代码生成页支持结果跨页面保留
-- 批准后可直接查看“可交付文件”区域
-- 运行中心支持查看 continuation run、review 决策和产物摘要
+当前主框架已经整合“工程师助手”模块，不再维护第二套平行系统。
 
-## 5. RAG 与 PDF 提取说明
+助手当前可读取：
+
+- 最近运行记录
+- 工作区记忆
+- 本地知识片段
+- 最近的 TestPlan / 资源映射 / 代码生成 / 诊断上下文
+
+后端接口：
+
+- `POST /api/v1/chat/query`
+- `POST /api/v1/chat/message`
+- `GET /api/v1/workspace-memory`
+- `POST /api/v1/workspace-memory/reset`
+
+当前文本助手默认走文本模型。
+如果配置了：
+
+- `VISION_API_KEY`
+- `VISION_BASE_URL`
+- `VISION_MODEL`
+
+则图片问答会走视觉模型。
+
+## 5. PDF 提取、OCR 与 RAG
 
 ### PDF 提取链路
 
@@ -127,19 +153,24 @@
 - 页面过滤与本地规则补提取
 - `LLMExtractor` 结构化参数与引脚抽取
 
-当前版本**没有正式接入 OCR 主链路**。这意味着：
+### OCR 现状
 
-- 文本版 Datasheet 提取效果较好
-- 扫描件、图片型 PDF、截图表格的提取效果会下降
+当前版本已接入 **按需 OCR fallback**：
+
+- 默认优先使用文本层解析
+- 当页面文本层过稀疏时，再触发 OCR 补充
+- 适合扫描页、图片页和疑难页兜底
+
+这不是全量 OCR 主链，而是“文本优先、OCR 兜底”的模式。
 
 ### RAG 现状
 
 当前版本已经对 RAG 查询做了增强：
 
-- 会结合 `goal`
+- 结合 `goal`
 - 芯片名 / 芯片类型
 - 推荐测试项
-- STS8200S API 关键词
+- `STS8200S` API 关键词
 
 来提高命中率。
 
@@ -151,7 +182,7 @@
 
 ## 6. 典型产物
 
-平台当前可能生成或记录这些典型产物：
+平台当前可生成或记录这些典型产物：
 
 - `testplan_result`
 - `resource_mapping`
@@ -169,43 +200,44 @@
 
 ```text
 data/processed/agent_runs/{run_id}/
-├─ run.json
-├─ steps.json
-└─ artifacts/
-   ├─ index.json
-   ├─ *.json
-   └─ ...
+├── run.json
+├── steps.json
+└── artifacts/
+    ├── index.json
+    ├── *.json
+    └── ...
 ```
 
 ## 7. 目录结构
 
 ```text
 ate-ai-platform/
-├─ apps/                      # React + Vite + Electron 前端
-│  ├─ electron/
-│  ├─ src/
-│  │  ├─ api/
-│  │  ├─ components/
-│  │  ├─ pages/
-│  │  ├─ utils/
-│  │  └─ types.ts
-│  └─ package.json
-├─ backend/
-│  ├─ app/
-│  │  ├─ api/v1/
-│  │  ├─ core/
-│  │  ├─ flows/
-│  │  ├─ models/
-│  │  ├─ services/
-│  │  └─ utils/
-│  ├─ tests/
-│  ├─ check_env.py
-│  └─ cli.py
-├─ data/
-│  ├─ uploads/
-│  └─ processed/
-├─ docs/
-└─ requirements.txt
+├── apps/                      # React + Vite + Electron 前端
+│   ├── electron/
+│   ├── src/
+│   │   ├── api/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── utils/
+│   │   └── types.ts
+│   └── package.json
+├── backend/
+│   ├── app/
+│   │   ├── api/v1/
+│   │   ├── core/
+│   │   ├── flows/
+│   │   ├── models/
+│   │   ├── services/
+│   │   └── utils/
+│   ├── tests/
+│   ├── check_env.py
+│   └── cli.py
+├── data/
+│   ├── knowledge/
+│   ├── uploads/
+│   └── processed/
+├── docs/
+└── requirements.txt
 ```
 
 ## 8. 环境要求
@@ -213,7 +245,16 @@ ate-ai-platform/
 - Python 3.10+
 - Node.js 20+
 - 推荐 Windows + PowerShell
-- 如需启用 LLM / RAG，请配置 DeepSeek API Key
+
+如需启用文本模型：
+
+- `DEEPSEEK_API_KEY`
+
+如需启用视觉模型：
+
+- `VISION_API_KEY`
+- `VISION_BASE_URL`
+- `VISION_MODEL`
 
 ## 9. 后端启动
 
@@ -232,6 +273,11 @@ pip install -r requirements.txt
 DEEPSEEK_API_KEY=sk-your-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 DEEPSEEK_MODEL=deepseek-chat
+
+VISION_API_KEY=
+VISION_BASE_URL=
+VISION_MODEL=
+
 DEBUG=true
 ```
 
@@ -322,6 +368,13 @@ npm run desktop:installer
 - `POST /api/v1/agent-runs/{run_id}/reject`
 - `DELETE /api/v1/agent-runs`
 
+### 工程师助手
+
+- `POST /api/v1/chat/query`
+- `POST /api/v1/chat/message`
+- `GET /api/v1/workspace-memory`
+- `POST /api/v1/workspace-memory/reset`
+
 ### 其他
 
 - `GET /health`
@@ -350,17 +403,18 @@ npm run lint
 npm run build
 ```
 
-## 14. 当前边界与注意事项
+## 14. 当前边界
 
 - 自动生成的测试代码、资源映射和工程包，必须由 ATE 工程师复核后再使用
-- `review_summary` 和运行中心里的结论属于辅助判断，不是最终放行依据
+- `review_summary` 和运行中心结论属于辅助判断，不是最终放行依据
+- 当前平台仍未实现批准后自动控制 ATE 真机执行测试
 - 若未配置模型能力，提取和生成链路会明显受限
-- 若 PDF 为扫描件或图片型文档，当前提取效果会下降
+- 若 PDF 为扫描件或图片型文档，虽然已有 OCR fallback，但复杂场景效果仍可能下降
 - `data/uploads/`、`data/processed/`、`logs/` 为运行产物目录，不建议直接提交生成结果入库
 
 ## 15. 相关文档
 
 - [Full ATE Development Flow](docs/full-ate-development-flow.md)
 - [Agent Run Artifacts](docs/agent-run-artifacts.md)
-- [Agent Controller 实施方案](docs/agent-controller-implementation-plan.md)
-- [阶段性 Agent 化说明](docs/phase2-run-model-completion.md)
+- [工程师助手迁移方案](docs/engineer-assistant-migration-plan.md)
+- [项目框架图](competition_submission_materials/diagrams/project_framework_v2.md)
