@@ -25,25 +25,43 @@ function persistApiOrigin(apiOrigin: string) {
   }
 }
 
+const LOCAL_API_ORIGIN = 'http://127.0.0.1:18081';
+
+function normalizeLocalApiOrigin(apiOrigin: string): string {
+  const normalized = (apiOrigin || '').replace(/\/$/, '');
+  if (!normalized) return '';
+  if (normalized === 'http://127.0.0.1:18080' || normalized === 'http://localhost:18080') {
+    return LOCAL_API_ORIGIN;
+  }
+  return normalized;
+}
+
 export function getApiOrigin(): string {
   const envOrigin = (import.meta.env.VITE_API_ORIGIN || '').replace(/\/$/, '');
   if (envOrigin) return envOrigin;
 
   if (typeof window === 'undefined') return '';
 
-  const fromQuery = new URLSearchParams(window.location.search).get('apiOrigin')?.replace(/\/$/, '') || '';
+  const fromQuery = normalizeLocalApiOrigin(new URLSearchParams(window.location.search).get('apiOrigin') || '');
   if (fromQuery) {
     persistApiOrigin(fromQuery);
     return fromQuery;
   }
 
-  const fromSession = readStoredApiOrigin(window.sessionStorage).replace(/\/$/, '');
-  if (fromSession) return fromSession;
+  const fromSession = normalizeLocalApiOrigin(readStoredApiOrigin(window.sessionStorage));
+  if (fromSession) {
+    persistApiOrigin(fromSession);
+    return fromSession;
+  }
 
-  const fromLocal = readStoredApiOrigin(window.localStorage).replace(/\/$/, '');
-  if (fromLocal) return fromLocal;
+  const fromLocal = normalizeLocalApiOrigin(readStoredApiOrigin(window.localStorage));
+  if (fromLocal) {
+    persistApiOrigin(fromLocal);
+    return fromLocal;
+  }
 
-  if (window.location.protocol === 'file:') return 'http://127.0.0.1:18080';
+  if (window.location.protocol === 'file:') return LOCAL_API_ORIGIN;
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') return LOCAL_API_ORIGIN;
   return '';
 }
 
@@ -63,7 +81,7 @@ export function resolveBackendUrl(url: string): string {
   return `${apiOrigin}/${url.replace(/^\.?\//, '')}`;
 }
 
-// ─── 通用响应类型 ─────────────────────────────────────────────
+// 通用响应类型
 export interface ApiResponse<T> {
   code: number;
   status: 'success' | 'error';
@@ -72,7 +90,7 @@ export interface ApiResponse<T> {
   timestamp: number;
 }
 
-// ─── TestPlan 相关类型 ─────────────────────────────────────────
+// TestPlan 相关类型
 export interface UploadResult {
   file_id: string;
   filename: string;
@@ -93,12 +111,12 @@ export interface ExtractionStatistics {
 }
 
 export interface RangeRecommendation {
-  param:        string;
-  value:        string;
+  param: string;
+  value: string;
   range_module: string;
-  range_value:  string;
-  reason:       string;
-  priority:     'high' | 'normal';
+  range_value: string;
+  reason: string;
+  priority: 'high' | 'normal';
 }
 
 export interface ExtractionResult {
@@ -147,7 +165,7 @@ export interface FileListItem {
   created_time: string;
 }
 
-// ─── 资源映射相关类型 ─────────────────────────────────────────
+// 资源映射相关类型
 export interface ResourceMapResult {
   chip_name: string;
   chip_type: string;
@@ -173,7 +191,7 @@ export interface ResourceMapResult {
   run?: AgentRunResult;
 }
 
-// ─── 健康检查 ─────────────────────────────────────────────────
+// 健康检查
 export interface HealthResult {
   status: string;
   version: string;
@@ -183,11 +201,11 @@ export interface HealthResult {
   upload_exists: boolean;
 }
 
-// ─── 通用请求函数 ─────────────────────────────────────────────
+// 通用请求函数
 async function request<T>(
   url: string,
   options?: RequestInit,
-  timeoutMs = 30000
+  timeoutMs = 30000,
 ): Promise<ApiResponse<T>> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -199,7 +217,7 @@ async function request<T>(
     });
   } catch (err: any) {
     if (err?.name === 'AbortError') {
-      throw new Error(`请求超时，请检查后端 API 是否已启动：${getApiOrigin()}`);
+      throw new Error(`请求超时，请检查后端状态或确认当前任务是否执行过慢：${getApiOrigin()}`);
     }
     throw err;
   } finally {
@@ -216,27 +234,28 @@ async function request<T>(
   return response.json();
 }
 
-// ─── 健康检查 ─────────────────────────────────────────────────
+// 健康检查
 export async function checkHealth(): Promise<ApiResponse<HealthResult>> {
   return request<HealthResult>(`${getApiOrigin()}/health`, undefined, 5000);
 }
 
-// ─── TestPlan API ─────────────────────────────────────────────
-
-/** 上传 PDF 文件 */
+// TestPlan API
 export async function uploadPDF(file: File): Promise<ApiResponse<UploadResult>> {
   const formData = new FormData();
   formData.append('file', file);
-  return request<UploadResult>(`${getBaseUrl()}/testplan/upload`, {
-    method: 'POST',
-    body: formData,
-  }, 20000);
+  return request<UploadResult>(
+    `${getBaseUrl()}/testplan/upload`,
+    {
+      method: 'POST',
+      body: formData,
+    },
+    60000,
+  );
 }
 
-/** 同步提取 TestPlan */
 export async function extractTestplan(
   fileId: string,
-  options: { pages?: string; maxWorkers?: number } = {}
+  options: { pages?: string; maxWorkers?: number } = {},
 ): Promise<ApiResponse<ExtractionResult>> {
   const params = new URLSearchParams({ file_id: fileId });
   if (options.pages) params.append('pages', options.pages);
@@ -264,10 +283,9 @@ export interface TaskListResult {
   total: number;
 }
 
-/** 异步提取 TestPlan（提交任务） */
 export async function extractTestplanAsync(
   fileId: string,
-  options: { pages?: string; maxWorkers?: number } = {}
+  options: { pages?: string; maxWorkers?: number } = {},
 ): Promise<ApiResponse<{ task_id: string; status_url: string; file_id: string }>> {
   const params = new URLSearchParams({ file_id: fileId });
   if (options.pages) params.append('pages', options.pages);
@@ -277,7 +295,6 @@ export async function extractTestplanAsync(
   });
 }
 
-/** 查询任务状态 */
 export async function getTaskStatus(taskId: string): Promise<ApiResponse<TaskStatusResult>> {
   return request<TaskStatusResult>(`${getBaseUrl()}/testplan/status/${taskId}`);
 }
@@ -286,7 +303,9 @@ export async function listExtractionTasks(limit = 50): Promise<ApiResponse<TaskL
   return request<TaskListResult>(`${getBaseUrl()}/testplan/tasks?limit=${limit}`);
 }
 
-export async function retryExtractionTask(taskId: string): Promise<ApiResponse<{ task_id: string; status_url: string; file_id: string }>> {
+export async function retryExtractionTask(
+  taskId: string,
+): Promise<ApiResponse<{ task_id: string; status_url: string; file_id: string }>> {
   return request(`${getBaseUrl()}/testplan/retry/${taskId}`, {
     method: 'POST',
   });
@@ -298,35 +317,35 @@ export async function cancelExtractionTask(taskId: string): Promise<ApiResponse<
   });
 }
 
-export async function cleanExtractionTasks(status?: 'completed' | 'failed' | 'cancelled'): Promise<ApiResponse<{ deleted_count: number; statuses: string[] }>> {
+export async function cleanExtractionTasks(
+  status?: 'completed' | 'failed' | 'cancelled',
+): Promise<ApiResponse<{ deleted_count: number; statuses: string[] }>> {
   const suffix = status ? `?status=${status}` : '';
   return request(`${getBaseUrl()}/testplan/tasks${suffix}`, {
     method: 'DELETE',
   });
 }
 
-/** 获取引脚定义 */
 export async function getPinDefinitions(fileId: string): Promise<ApiResponse<PinsResult>> {
   return request<PinsResult>(`${getBaseUrl()}/testplan/pins/${fileId}`);
 }
 
-/** 获取文件列表 */
-export async function listFiles(page = 1, pageSize = 10): Promise<ApiResponse<{ items: FileListItem[]; total: number }>> {
+export async function listFiles(
+  page = 1,
+  pageSize = 10,
+): Promise<ApiResponse<{ items: FileListItem[]; total: number }>> {
   const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   return request(`${getBaseUrl()}/testplan/list?${params}`);
 }
 
-/** 获取下载链接（通过代理） */
 export function getDownloadUrl(fileId: string, type: 'excel' | 'json'): string {
   return `${getBaseUrl()}/testplan/download/${fileId}/${type}`;
 }
 
-// ─── 资源映射 API ─────────────────────────────────────────────
-
-/** 生成资源映射 */
+// 资源映射 API
 export async function generateResourceMap(
   fileId: string,
-  dualSite = false
+  dualSite = false,
 ): Promise<{ status: string; message: string; data: ResourceMapResult }> {
   const formData = new FormData();
   formData.append('file_id', fileId);
@@ -342,22 +361,22 @@ export async function generateResourceMap(
   return response.json();
 }
 
-// ─── 代码生成相关类型 ─────────────────────────────────────────
+// 代码生成相关类型
 export interface CodegenRequest {
-  chip_name:    string;
-  chip_type:    'digital' | 'ldo' | 'custom';
-  test_items:   string[];
-  user_prompt:  string;
-  file_id?:     string;
+  chip_name: string;
+  chip_type: 'digital' | 'ldo' | 'custom';
+  test_items: string[];
+  user_prompt: string;
+  file_id?: string;
   auto_recommend?: boolean;
   export_package?: boolean;
-  pin_names?:   string[];
-  input_pins?:  string[];
+  pin_names?: string[];
+  input_pins?: string[];
   output_pins?: string[];
-  vcc?:         number;
-  vout?:        number;
+  vcc?: number;
+  vout?: number;
   ldo_out_pin?: number;
-  load_ma?:     number;
+  load_ma?: number;
 }
 
 export interface CompileValidationResult {
@@ -439,17 +458,32 @@ export interface CodegenPlan {
 export interface AgentRunStep {
   agent: string;
   status: string;
+  message?: string;
   warnings?: string[];
   errors?: string[];
   artifacts?: {
+    name?: string;
     type?: string;
+    producer?: string;
     summary?: Record<string, unknown>;
   }[];
   metadata?: Record<string, unknown>;
+  next_action?: string | null;
+  requires_human_review?: boolean;
+  quality?: {
+    score: number;
+    fallback_used: boolean;
+    risk_flags: string[];
+  };
 }
 
 export interface AgentRunArtifact {
+  name?: string;
   type?: string;
+  producer?: string;
+  path?: string;
+  format?: string;
+  metadata_path?: string;
   summary?: Record<string, unknown>;
 }
 
@@ -457,24 +491,154 @@ export interface AgentRunResult {
   run_id: string;
   flow_name: string;
   status: string;
+  created_at?: string;
+  updated_at?: string;
   steps: AgentRunStep[];
   warnings: string[];
   errors: string[];
   artifacts: AgentRunArtifact[];
+  shared?: Record<string, unknown>;
+  parent_run_id?: string | null;
+  continuation_run_id?: string | null;
+  triggered_by?: string | null;
+  review_source_run_id?: string | null;
+  review_decision?: {
+    decision: string;
+    reviewer: string;
+    reason: string;
+    reviewed_at: string;
+    rejection_type?: 'input_issue' | 'engineering_decision' | 'auto_fixable';
+    resolution_owner?: 'user' | 'agent';
+    next_action?: string;
+  };
+  continuation_run?: AgentRunResult;
+  routing_run?: AgentRunResult;
 }
 
-export async function listAgentRuns(limit = 20, flowName?: string): Promise<ApiResponse<{ items: AgentRunResult[]; total: number }>> {
+export async function listAgentRuns(
+  limit = 20,
+  flowName?: string,
+): Promise<ApiResponse<{ items: AgentRunResult[]; total: number }>> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (flowName) params.append('flow_name', flowName);
   return request<{ items: AgentRunResult[]; total: number }>(`${getBaseUrl()}/agent-runs?${params}`);
+}
+
+export async function clearAgentRuns(
+  flowName?: string,
+): Promise<ApiResponse<{ deleted_count: number; flow_name?: string | null }>> {
+  const suffix = flowName ? `?flow_name=${encodeURIComponent(flowName)}` : '';
+  return request<{ deleted_count: number; flow_name?: string | null }>(`${getBaseUrl()}/agent-runs${suffix}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function getAgentRun(runId: string): Promise<ApiResponse<AgentRunResult>> {
   return request<AgentRunResult>(`${getBaseUrl()}/agent-runs/${runId}`);
 }
 
-export async function getAgentRunArtifacts(runId: string): Promise<ApiResponse<{ run_id: string; flow_name: string; status: string; artifacts: AgentRunArtifact[] }>> {
-  return request<{ run_id: string; flow_name: string; status: string; artifacts: AgentRunArtifact[] }>(`${getBaseUrl()}/agent-runs/${runId}/artifacts`);
+export async function getAgentRunArtifacts(
+  runId: string,
+): Promise<ApiResponse<{ run_id: string; flow_name: string; status: string; artifacts: AgentRunArtifact[] }>> {
+  return request<{ run_id: string; flow_name: string; status: string; artifacts: AgentRunArtifact[] }>(
+    `${getBaseUrl()}/agent-runs/${runId}/artifacts`,
+  );
+}
+
+export async function getAgentRunArtifact(
+  runId: string,
+  artifactName: string,
+): Promise<ApiResponse<{ run_id: string; flow_name: string; status: string; artifact: AgentRunArtifact }>> {
+  return request<{ run_id: string; flow_name: string; status: string; artifact: AgentRunArtifact }>(
+    `${getBaseUrl()}/agent-runs/${runId}/artifacts/${encodeURIComponent(artifactName)}`,
+  );
+}
+
+export interface FullAteRunCreateRequest {
+  flow_name: 'full_ate_development';
+  goal: string;
+  file_id?: string;
+  pdf_path?: string;
+  chip_name?: string;
+  chip_type?: string;
+  test_items?: string[];
+  user_prompt?: string;
+  auto_recommend?: boolean;
+  export_package?: boolean;
+  pages?: string;
+  max_workers?: number;
+  dual_site?: boolean;
+  vcc?: number;
+  vout?: number;
+  ldo_out_pin?: number;
+  load_ma?: number;
+  async_mode?: boolean;
+}
+
+export async function approveAgentRun(
+  runId: string,
+  reviewer = 'ATE Engineer',
+): Promise<ApiResponse<AgentRunResult>> {
+  return request<AgentRunResult>(`${getBaseUrl()}/agent-runs/${runId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reviewer }),
+  });
+}
+
+export async function rejectAgentRun(
+  runId: string,
+  reason = '',
+  reviewer = 'ATE Engineer',
+): Promise<ApiResponse<AgentRunResult>> {
+  return request<AgentRunResult>(`${getBaseUrl()}/agent-runs/${runId}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reviewer, reason }),
+  });
+}
+
+export async function rejectAgentRunWithRouting(
+  runId: string,
+  payload: {
+    reviewer?: string;
+    reason: string;
+    rejection_type: 'input_issue' | 'engineering_decision' | 'auto_fixable';
+  },
+): Promise<ApiResponse<AgentRunResult>> {
+  return request<AgentRunResult>(`${getBaseUrl()}/agent-runs/${runId}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      reviewer: payload.reviewer || 'ATE Engineer',
+      reason: payload.reason,
+      rejection_type: payload.rejection_type,
+    }),
+  });
+}
+
+export async function createFullAteRun(payload: FullAteRunCreateRequest): Promise<ApiResponse<AgentRunResult>> {
+  return request<AgentRunResult>(
+    `${getBaseUrl()}/agent-runs`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    180000,
+  );
+}
+
+export async function createFullAteRunAsync(payload: FullAteRunCreateRequest): Promise<ApiResponse<AgentRunResult>> {
+  return request<AgentRunResult>(
+    `${getBaseUrl()}/agent-runs`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, async_mode: true }),
+    },
+    15000,
+  );
 }
 
 export interface PackageExportResult {
@@ -499,13 +663,13 @@ export interface PackageExportResult {
 }
 
 export interface CodegenResult {
-  code:        string;
-  filename:    string;
-  lines:       number;
-  functions:   number;
-  chip_name:   string;
-  chip_type:   string;
-  test_items:  string[];
+  code: string;
+  filename: string;
+  lines: number;
+  functions: number;
+  chip_name: string;
+  chip_type: string;
+  test_items: string[];
   recommended_items?: string[];
   knowledge_used?: boolean;
   knowledge_items?: {
@@ -535,14 +699,14 @@ export interface CodegenResult {
 }
 
 export interface TemplateItem {
-  id:   string;
+  id: string;
   name: string;
   desc: string;
 }
 
 export interface TemplatesResult {
   digital: TemplateItem[];
-  ldo:     TemplateItem[];
+  ldo: TemplateItem[];
   knowledge_summary?: {
     root: string;
     sample_count: number;
@@ -550,7 +714,6 @@ export interface TemplatesResult {
   };
 }
 
-/** 生成 STS8200S 测试代码 */
 export async function generateCode(req: CodegenRequest): Promise<ApiResponse<CodegenResult>> {
   return request<CodegenResult>(`${getBaseUrl()}/codegen/generate`, {
     method: 'POST',
@@ -559,7 +722,6 @@ export async function generateCode(req: CodegenRequest): Promise<ApiResponse<Cod
   });
 }
 
-/** 获取支持的测试项模板列表 */
 export async function getCodeTemplates(): Promise<ApiResponse<TemplatesResult>> {
   return request<TemplatesResult>(`${getBaseUrl()}/codegen/templates`);
 }
@@ -575,7 +737,9 @@ export interface CodegenRecommendation {
   available_items: string[];
 }
 
-export async function recommendCodeItems(req: { chip_type?: string; file_id?: string }): Promise<ApiResponse<CodegenRecommendation>> {
+export async function recommendCodeItems(
+  req: { chip_type?: string; file_id?: string },
+): Promise<ApiResponse<CodegenRecommendation>> {
   return request<CodegenRecommendation>(`${getBaseUrl()}/codegen/recommend`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -583,21 +747,18 @@ export async function recommendCodeItems(req: { chip_type?: string; file_id?: st
   });
 }
 
-// ─── RAG 相关类型 ──────────────────────────────────────────────
-
+// RAG 相关类型
 export interface RagStatus {
-  ready:      boolean;
-  doc_count:  number;
-  backend:    string;
+  ready: boolean;
+  doc_count: number;
+  backend: string;
   index_hash: string;
 }
 
-/** 获取 RAG 索引状态 */
 export async function getRagStatus(): Promise<ApiResponse<RagStatus>> {
   return request<RagStatus>(`${getBaseUrl()}/rag/status`);
 }
 
-/** 构建 RAG 内置知识库 */
 export async function buildRagIndex(pdfPath?: string): Promise<ApiResponse<RagStatus>> {
   return request<RagStatus>(`${getBaseUrl()}/rag/build`, {
     method: 'POST',
@@ -606,45 +767,43 @@ export async function buildRagIndex(pdfPath?: string): Promise<ApiResponse<RagSt
   });
 }
 
-// ─── 诊断相关类型 ──────────────────────────────────────────────
-
+// 诊断相关类型
 export interface AnomalyEvent {
-  type:        string;
-  confidence:  number;
+  type: string;
+  confidence: number;
   description: string;
-  severity:    'high' | 'medium' | 'low';
-  timestamp:   string;
-  channel:     number;
+  severity: 'high' | 'medium' | 'low';
+  timestamp: string;
+  channel: number;
 }
 
 export interface WaveformPoint {
-  t:    number;
-  v:    number;
-  i:    number;
+  t: number;
+  v: number;
+  i: number;
   flag: boolean;
 }
 
 export interface DiagnosisResult {
-  yield_rate:       number;
-  yield_trend:      number;
-  yield_predicted:  number;
-  fty_rolling:      number;
-  sample_count:     number;
-  anomaly_ratio:    number;
-  model_backend:    string;
+  yield_rate: number;
+  yield_trend: number;
+  yield_predicted: number;
+  fty_rolling: number;
+  sample_count: number;
+  anomaly_ratio: number;
+  model_backend: string;
   analysis_time_ms: number;
-  anomalies:        AnomalyEvent[];
-  waveform:         WaveformPoint[];
+  anomalies: AnomalyEvent[];
+  waveform: WaveformPoint[];
 }
 
 export interface DiagnosisRequest {
-  n_samples?:      number;
+  n_samples?: number;
   inject_anomaly?: boolean;
-  anomaly_ratio?:  number;
-  channel?:        number;
+  anomaly_ratio?: number;
+  channel?: number;
 }
 
-/** 运行 ML 良率诊断 */
 export async function runDiagnosis(req?: DiagnosisRequest): Promise<ApiResponse<DiagnosisResult>> {
   return request<DiagnosisResult>(`${getBaseUrl()}/diagnosis/run`, {
     method: 'POST',
@@ -653,8 +812,9 @@ export async function runDiagnosis(req?: DiagnosisRequest): Promise<ApiResponse<
   });
 }
 
-/** 获取实时波形数据 */
-export async function getWaveform(nPoints?: number): Promise<ApiResponse<{waveform: WaveformPoint[]; yield_rate: number; anomaly_ratio: number}>> {
+export async function getWaveform(
+  nPoints?: number,
+): Promise<ApiResponse<{ waveform: WaveformPoint[]; yield_rate: number; anomaly_ratio: number }>> {
   const qs = nPoints ? `?n_points=${nPoints}` : '';
   return request(`${getBaseUrl()}/diagnosis/waveform${qs}`);
 }

@@ -13,7 +13,8 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { generateResourceMap, resolveBackendUrl, type ResourceMapResult } from '../api/backend';
-import { getFlowLabel, getRunStatusPresentation } from '../utils/runPresentation';
+
+const RESOURCE_PAGE_STORAGE_KEY = 'ate_resource_map_page_state';
 
 function downloadFile(url: string, filename: string) {
   try {
@@ -32,15 +33,11 @@ function downloadFile(url: string, filename: string) {
 
 function getStoredFileId(): string | null {
   const lastId = sessionStorage.getItem('ate_last_file_id');
-  if (lastId) {
-    return lastId;
-  }
+  if (lastId) return lastId;
 
   try {
     const raw = sessionStorage.getItem('ate_extraction_store');
-    if (!raw) {
-      return null;
-    }
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
     return parsed.fileInfo?.file_id || null;
   } catch {
@@ -66,19 +63,69 @@ const INITIAL_STATE: ResourceState = {
   error: '',
 };
 
+function readStoredResourceState(): ResourceState | null {
+  try {
+    const raw = window.sessionStorage.getItem(RESOURCE_PAGE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ResourceState>;
+    return {
+      stage: parsed.stage === 'done' || parsed.stage === 'error' ? parsed.stage : 'idle',
+      result: parsed.result || null,
+      svgUrl: parsed.svgUrl || '',
+      svgContent: parsed.svgContent || '',
+      error: parsed.error || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistResourceState(state: ResourceState) {
+  try {
+    window.sessionStorage.setItem(RESOURCE_PAGE_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function clearStoredResourceState() {
+  try {
+    window.sessionStorage.removeItem(RESOURCE_PAGE_STORAGE_KEY);
+  } catch {
+    // ignore storage failures
+  }
+}
+
 export function Resources() {
-  const [state, setState] = useState<ResourceState>(INITIAL_STATE);
+  const [state, setState] = useState<ResourceState>(() => {
+    if (typeof window === 'undefined') return INITIAL_STATE;
+    return readStoredResourceState() || INITIAL_STATE;
+  });
   const [dualSite, setDualSite] = useState(false);
   const [fileId, setFileId] = useState<string | null>(null);
   const [manualFileId, setManualFileId] = useState('');
 
   const updateState = (patch: Partial<ResourceState>) => {
-    setState((prev) => ({ ...prev, ...patch }));
+    setState(prev => ({ ...prev, ...patch }));
   };
 
   useEffect(() => {
     setFileId(getStoredFileId());
   }, []);
+
+  useEffect(() => {
+    if (state.stage === 'done' && state.result) {
+      persistResourceState(state);
+      return;
+    }
+    if (state.stage === 'error' && state.error) {
+      persistResourceState(state);
+      return;
+    }
+    if (state.stage === 'idle') {
+      clearStoredResourceState();
+    }
+  }, [state]);
 
   const activeFileId = useMemo(() => fileId || manualFileId.trim(), [fileId, manualFileId]);
 
@@ -105,9 +152,7 @@ export function Resources() {
       let svgContent = '';
       try {
         const svgResponse = await fetch(svgUrl);
-        if (svgResponse.ok) {
-          svgContent = await svgResponse.text();
-        }
+        if (svgResponse.ok) svgContent = await svgResponse.text();
       } catch {
         svgContent = '';
       }
@@ -126,7 +171,7 @@ export function Resources() {
       });
       return;
     }
-    runGenerate(activeFileId);
+    void runGenerate(activeFileId);
   };
 
   const { stage, result, svgUrl, svgContent, error } = state;
@@ -136,7 +181,7 @@ export function Resources() {
       <section className="mb-2">
         <h1 className="mb-2 text-4xl font-headline font-bold tracking-tight text-primary">资源映射与原理图</h1>
         <p className="max-w-2xl text-sm leading-relaxed text-on-surface-variant">
-          基于模块一提取的引脚定义，自动生成 ATE 资源分配方案、PGS 配置和负载板原理图草案。
+          基于模块一提取出的引脚定义，自动生成 ATE 资源分配方案、PGS 配置和负载板原理图草案。
         </p>
       </section>
 
@@ -161,7 +206,7 @@ export function Resources() {
               type="text"
               placeholder="手动输入文件 ID，例如 A1B2C3D4"
               value={manualFileId}
-              onChange={(event) => setManualFileId(event.target.value)}
+              onChange={event => setManualFileId(event.target.value)}
               className="rounded-xl border border-outline-variant/30 bg-surface-container-highest px-4 py-3 font-mono text-sm text-on-surface placeholder:text-on-surface-variant/40 focus:border-primary/50 focus:outline-none"
             />
           </div>
@@ -169,12 +214,10 @@ export function Resources() {
 
         <div className="flex items-center gap-4">
           <button
-            onClick={() => setDualSite((value) => !value)}
+            onClick={() => setDualSite(value => !value)}
             className={`relative h-6 w-12 rounded-full transition-colors ${dualSite ? 'bg-primary' : 'bg-surface-container-highest'}`}
           >
-            <div
-              className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-all ${dualSite ? 'left-7' : 'left-1'}`}
-            />
+            <div className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-all ${dualSite ? 'left-7' : 'left-1'}`} />
           </button>
           <span className="text-sm text-on-surface-variant">双工位模式，适合 LDO 或双站点验证场景</span>
         </div>
@@ -187,16 +230,12 @@ export function Resources() {
           生成资源映射
         </button>
 
-        {stage === 'error' && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex items-start gap-3 rounded-xl border border-error/20 bg-error/10 p-4"
-          >
+        {stage === 'error' ? (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-start gap-3 rounded-xl border border-error/20 bg-error/10 p-4">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-error" />
             <p className="text-sm text-on-surface-variant">{error}</p>
           </motion.div>
-        )}
+        ) : null}
       </div>
     </motion.div>
   );
@@ -229,7 +268,10 @@ export function Resources() {
           </div>
 
           <button
-            onClick={() => setState(INITIAL_STATE)}
+            onClick={() => {
+              clearStoredResourceState();
+              setState(INITIAL_STATE);
+            }}
             className="flex items-center gap-2 rounded-xl border border-outline-variant/30 px-5 py-3 text-xs font-bold uppercase tracking-widest text-on-surface-variant transition-all hover:bg-surface-bright"
           >
             <RefreshCw className="h-4 w-4" />
@@ -237,28 +279,25 @@ export function Resources() {
           </button>
         </section>
 
-        {result.warnings.length > 0 && (
+        {result.warnings.length > 0 ? (
           <div className="flex flex-col gap-2">
-            {result.warnings.map((warning) => (
-              <div
-                key={warning}
-                className="flex items-center gap-3 rounded-xl border border-tertiary/20 bg-tertiary/10 p-3 text-xs text-on-surface-variant"
-              >
+            {result.warnings.map(warning => (
+              <div key={warning} className="flex items-center gap-3 rounded-xl border border-tertiary/20 bg-tertiary/10 p-3 text-xs text-on-surface-variant">
                 <AlertTriangle className="h-4 w-4 shrink-0 text-tertiary" />
                 {warning}
               </div>
             ))}
           </div>
-        )}
+        ) : null}
 
-        {result.run && (
+        {result.run ? (
           <section className="rounded-2xl border border-outline-variant/10 bg-surface-container-low p-5 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.25em] text-primary">本次运行摘要</div>
                 <h3 className="font-headline text-xl font-bold text-on-surface">资源映射结果已写入运行中心</h3>
                 <p className="mt-1 text-sm text-on-surface-variant">
-                  资源页保持主操作和下载视图，详细阶段和中间产物可以去“运行中心”回看。
+                  资源页保留主操作和下载视图，详细阶段和中间产物可以去“运行中心”回看。
                 </p>
               </div>
               <div className="rounded-xl border border-outline-variant/10 bg-surface-container px-4 py-3">
@@ -283,7 +322,7 @@ export function Resources() {
               ))}
             </div>
           </section>
-        )}
+        ) : null}
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           <div className="flex flex-col gap-6 lg:col-span-4">
@@ -303,14 +342,9 @@ export function Resources() {
                 {[
                   { label: '已映射引脚', value: result.pin_count, unit: '个' },
                   { label: 'PGS 配置项', value: result.pgs_items, unit: '项' },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    className="flex items-center justify-between rounded-xl border border-outline-variant/5 bg-surface-container p-4"
-                  >
-                    <span className="text-xs font-bold uppercase tracking-widest text-on-surface-variant opacity-70">
-                      {item.label}
-                    </span>
+                ].map(item => (
+                  <div key={item.label} className="flex items-center justify-between rounded-xl border border-outline-variant/5 bg-surface-container p-4">
+                    <span className="text-xs font-bold uppercase tracking-widest text-on-surface-variant opacity-70">{item.label}</span>
                     <div className="flex items-baseline gap-1">
                       <span className="font-headline text-2xl font-bold tracking-tighter text-primary">{item.value}</span>
                       <span className="text-xs text-on-surface-variant">{item.unit}</span>
@@ -320,7 +354,7 @@ export function Resources() {
               </div>
             </div>
 
-            {result.summary && (
+            {result.summary ? (
               <div className="rounded-2xl border border-secondary/15 bg-surface-container-low p-6 shadow-sm">
                 <h3 className="mb-3 text-sm font-headline font-bold text-on-surface">复杂场景摘要</h3>
                 <div className="grid grid-cols-2 gap-3">
@@ -331,7 +365,7 @@ export function Resources() {
                     { label: '未分配', value: result.summary.unassigned_count },
                     { label: 'DIO SITE1', value: result.summary.dio_site1_count },
                     { label: 'DIO SITE2', value: result.summary.dio_site2_count },
-                  ].map((item) => (
+                  ].map(item => (
                     <div key={item.label} className="rounded-xl border border-outline-variant/10 bg-surface-container p-3 text-center">
                       <div className="font-headline text-xl font-bold text-secondary">{item.value}</div>
                       <div className="mt-1 text-[10px] uppercase tracking-widest text-on-surface-variant/60">{item.label}</div>
@@ -339,7 +373,7 @@ export function Resources() {
                   ))}
                 </div>
               </div>
-            )}
+            ) : null}
 
             <div className="flex flex-col gap-3 rounded-2xl border border-outline-variant/10 bg-surface-container-low p-6 shadow-sm">
               <h3 className="mb-2 flex items-center gap-2 text-sm font-headline font-bold text-on-surface">
@@ -363,7 +397,7 @@ export function Resources() {
                   url: result.download.bom_excel,
                   filename: `${result.chip_name}_BOM.xlsx`,
                 },
-              ].map((item) => (
+              ].map(item => (
                 <button
                   key={item.label}
                   onClick={() => downloadFile(item.url, item.filename)}

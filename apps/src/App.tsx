@@ -1,113 +1,91 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { Card } from './components/common/Card';
+import { AppLayout } from './components/layout/AppLayout';
+import type { ThemeMode, View } from './types';
+import { viewMeta } from './types';
 
-import React, { useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
-import { View } from './types.ts';
-import { TopNav, BottomNav } from './components/Navigation.tsx';
-import { Dashboard } from './components/Dashboard.tsx';
-import { Extractor } from './components/Extractor.tsx';
-import { Resources } from './components/Resources.tsx';
-import { CodeLab } from './components/CodeLab.tsx';
-import { AgentRuns } from './components/AgentRuns.tsx';
-import { FailureAnalysis } from './components/FailureAnalysis.tsx';
+const AgentWorkspacePage = lazy(() =>
+  import('./pages/AgentWorkspacePage').then(module => ({ default: module.AgentWorkspacePage })),
+);
+const AgentRunsPage = lazy(() => import('./pages/AgentRunsPage').then(module => ({ default: module.AgentRunsPage })));
+const TestPlanPage = lazy(() => import('./pages/TestPlanPage').then(module => ({ default: module.TestPlanPage })));
+const ResourceMapPage = lazy(() =>
+  import('./pages/ResourceMapPage').then(module => ({ default: module.ResourceMapPage })),
+);
+const CodegenPage = lazy(() => import('./pages/CodegenPage').then(module => ({ default: module.CodegenPage })));
+const DiagnosisPage = lazy(() => import('./pages/DiagnosisPage').then(module => ({ default: module.DiagnosisPage })));
+const KnowledgeBasePage = lazy(() =>
+  import('./pages/KnowledgeBasePage').then(module => ({ default: module.KnowledgeBasePage })),
+);
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then(module => ({ default: module.SettingsPage })));
 
-interface ErrorBoundaryState {
-  hasError: boolean;
-  message: string;
-}
+const THEME_STORAGE_KEY = 'ate_theme_mode';
 
-class ErrorBoundary extends React.Component<{ children: React.ReactNode; onReset: () => void }, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { hasError: false, message: '' };
-
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return {
-      hasError: true,
-      message: error.message || '未知页面错误',
-    };
-  }
-
-  handleReset = () => {
-    this.setState({ hasError: false, message: '' });
-    this.props.onReset();
-  };
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col items-center justify-center gap-6 px-8 py-32">
-          <div className="rounded-2xl bg-error/10 p-4">
-            <AlertTriangle className="h-12 w-12 text-error" />
-          </div>
-
-          <div className="text-center">
-            <h2 className="mb-2 font-headline text-2xl font-bold text-on-surface">页面组件异常</h2>
-            <p className="max-w-lg break-all rounded-lg bg-surface-container px-4 py-2 font-mono text-sm text-on-surface-variant">
-              {this.state.message}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={this.handleReset}
-            className="flex items-center gap-2 rounded-xl bg-primary px-8 py-4 text-sm font-bold text-on-primary transition-all hover:brightness-110"
-          >
-            <RefreshCw className="h-4 w-4" />
-            返回首页
-          </button>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
+function resolveInitialTheme(): ThemeMode {
+  if (typeof window === 'undefined') return 'dark';
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === 'light' ? 'light' : 'dark';
 }
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<View>('dashboard');
+  const [currentView, setCurrentView] = useState<View>('agent-workspace');
+  const [themeMode, setThemeMode] = useState<ThemeMode>(resolveInitialTheme);
 
-  const renderView = () => {
-    switch (currentView) {
-      case 'dashboard':
-        return <Dashboard onViewChange={setCurrentView} />;
-      case 'extractor':
-        return <Extractor />;
-      case 'resources':
-        return <Resources />;
-      case 'codelab':
-        return <CodeLab />;
-      case 'agentruns':
-        return <AgentRuns />;
-      case 'failure':
-        return <FailureAnalysis />;
-      default:
-        return <Dashboard onViewChange={setCurrentView} />;
-    }
-  };
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
+
+  let page;
+  switch (currentView) {
+    case 'agent-workspace':
+      page = <AgentWorkspacePage />;
+      break;
+    case 'agent-runs':
+      page = <AgentRunsPage />;
+      break;
+    case 'testplan':
+      page = <TestPlanPage />;
+      break;
+    case 'resource-map':
+      page = <ResourceMapPage />;
+      break;
+    case 'codegen':
+      page = <CodegenPage />;
+      break;
+    case 'diagnosis':
+      page = <DiagnosisPage />;
+      break;
+    case 'knowledge-base':
+      page = <KnowledgeBasePage />;
+      break;
+    case 'settings':
+      page = <SettingsPage themeMode={themeMode} onThemeChange={setThemeMode} />;
+      break;
+    default:
+      page = <AgentWorkspacePage />;
+      break;
+  }
 
   return (
-    <div className="flex min-h-screen flex-col pb-28 pt-20 md:pb-8">
-      <TopNav currentView={currentView} onViewChange={setCurrentView} />
-
-      <main className="mx-auto w-full max-w-[1800px] flex-1 p-4 md:p-8">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentView}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.3 }}
-            className="w-full"
-          >
-            <ErrorBoundary onReset={() => setCurrentView('dashboard')}>{renderView()}</ErrorBoundary>
-          </motion.div>
-        </AnimatePresence>
-      </main>
-
-      <BottomNav currentView={currentView} onViewChange={setCurrentView} />
-    </div>
+    <AppLayout
+      currentView={currentView}
+      onViewChange={setCurrentView}
+      title={viewMeta[currentView].title}
+      description={viewMeta[currentView].description}
+    >
+      <Suspense
+        fallback={
+          <Card title="页面加载中" subtitle="正在按需加载当前模块资源，请稍候。">
+            <div className="flex items-center gap-3 py-2 text-sm text-on-surface-variant/80">
+              <span className="inline-flex h-2.5 w-2.5 animate-pulse rounded-full bg-primary" />
+              正在准备 {viewMeta[currentView].title}
+            </div>
+          </Card>
+        }
+      >
+        {page}
+      </Suspense>
+    </AppLayout>
   );
 }

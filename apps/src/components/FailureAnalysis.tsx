@@ -25,9 +25,7 @@ function AnimatedNumber({ value, decimals = 1 }: { value: number; decimals?: num
     const tick = () => {
       const progress = Math.min(1, (Date.now() - startTime) / duration);
       setDisplay(start + (end - start) * progress);
-      if (progress < 1) {
-        requestAnimationFrame(tick);
-      }
+      if (progress < 1) requestAnimationFrame(tick);
     };
 
     requestAnimationFrame(tick);
@@ -37,15 +35,13 @@ function AnimatedNumber({ value, decimals = 1 }: { value: number; decimals?: num
 }
 
 function WaveformSVG({ points }: { points: WaveformPoint[] }) {
-  if (!points.length) {
-    return null;
-  }
+  if (!points.length) return null;
 
   const width = 1000;
   const height = 400;
   const padding = 20;
-  const minVoltage = Math.min(...points.map((point) => point.v));
-  const maxVoltage = Math.max(...points.map((point) => point.v));
+  const minVoltage = Math.min(...points.map(point => point.v));
+  const maxVoltage = Math.max(...points.map(point => point.v));
   const voltageRange = maxVoltage - minVoltage || 1;
 
   const toX = (index: number) => padding + (index / Math.max(points.length - 1, 1)) * (width - padding * 2);
@@ -59,11 +55,11 @@ function WaveformSVG({ points }: { points: WaveformPoint[] }) {
       })
       .join(' ');
 
-  const anomalyPoints = points.filter((point) => point.flag);
+  const anomalyPoints = points.filter(point => point.flag);
 
   return (
     <svg className="absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`}>
-      {[0, 1, 2, 3].map((row) => (
+      {[0, 1, 2, 3].map(row => (
         <line
           key={row}
           x1={padding}
@@ -76,7 +72,7 @@ function WaveformSVG({ points }: { points: WaveformPoint[] }) {
         />
       ))}
 
-      <path d={buildPath(points.filter((point) => !point.flag))} fill="none" stroke="#53ddfc" strokeWidth="1.5" opacity="0.6" />
+      <path d={buildPath(points.filter(point => !point.flag))} fill="none" stroke="#53ddfc" strokeWidth="1.5" opacity="0.6" />
 
       {anomalyPoints.map((point, index) => {
         const realIndex = points.indexOf(point);
@@ -128,15 +124,9 @@ const SEVERITY_STYLE = {
 } as const;
 
 function formatAnomalyType(type: string, channel: number) {
-  if (type === 'relay_degradation') {
-    return `继电器退化 K${channel + 1}`;
-  }
-  if (type === 'thermal_drift') {
-    return '夹具热漂移';
-  }
-  if (type === 'contact_noise') {
-    return `探针接触噪声 CH${channel}`;
-  }
+  if (type === 'relay_degradation') return `继电器退化 K${channel + 1}`;
+  if (type === 'thermal_drift') return '夹具热漂移';
+  if (type === 'contact_noise') return `探针接触噪声 CH${channel}`;
   return type;
 }
 
@@ -165,21 +155,19 @@ export function FailureAnalysis() {
   }, []);
 
   useEffect(() => {
-    runAnalysis();
+    void runAnalysis();
   }, [runAnalysis]);
 
   useEffect(() => {
-    if (!autoRefresh) {
-      return;
-    }
-    const timer = window.setInterval(runAnalysis, 30000);
+    if (!autoRefresh) return;
+    const timer = window.setInterval(() => {
+      void runAnalysis();
+    }, 30000);
     return () => window.clearInterval(timer);
   }, [autoRefresh, runAnalysis]);
 
   const exportLog = () => {
-    if (!result) {
-      return;
-    }
+    if (!result) return;
     const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
     const anchor = document.createElement('a');
     anchor.href = URL.createObjectURL(blob);
@@ -194,11 +182,7 @@ export function FailureAnalysis() {
       <div className="relative flex flex-col justify-between gap-6 md:flex-row md:items-end">
         <div className="space-y-3">
           <div className="inline-flex items-center gap-2 rounded-full border border-tertiary/20 bg-surface-container-high px-4 py-1.5 shadow-lg shadow-tertiary/5">
-            <div
-              className={`h-2 w-2 rounded-full ${
-                loading ? 'animate-pulse bg-primary' : autoRefresh ? 'pulse-dot bg-tertiary' : 'bg-surface-variant'
-              }`}
-            />
+            <div className={`h-2 w-2 rounded-full ${loading ? 'animate-pulse bg-primary' : autoRefresh ? 'pulse-dot bg-tertiary' : 'bg-surface-variant'}`} />
             <span className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-tertiary">
               {loading ? 'ML 分析中' : autoRefresh ? '实时监测中' : '已就绪'}
             </span>
@@ -207,11 +191,11 @@ export function FailureAnalysis() {
           <h1 className="font-headline text-5xl font-black tracking-tighter text-on-surface">故障诊断</h1>
           <p className="max-w-2xl text-sm leading-relaxed text-on-surface-variant opacity-80">
             基于 IsolationForest 的异常检测和良率趋势分析，适合演示机台波形、接触异常和热漂移等风险场景。
-            {result && (
+            {result ? (
               <span className="ml-2 font-mono text-primary">
                 耗时 {result.analysis_time_ms.toFixed(0)}ms | {result.model_backend}
               </span>
-            )}
+            ) : null}
           </p>
         </div>
 
@@ -226,7 +210,7 @@ export function FailureAnalysis() {
           </button>
 
           <button
-            onClick={() => setAutoRefresh((value) => !value)}
+            onClick={() => setAutoRefresh(value => !value)}
             className={`flex items-center gap-2 rounded-2xl border px-5 py-3.5 text-xs font-black uppercase tracking-[0.2em] transition-all ${
               autoRefresh ? 'border-tertiary/40 bg-tertiary/20 text-tertiary' : 'border-outline-variant/30 text-on-surface-variant'
             }`}
@@ -236,7 +220,7 @@ export function FailureAnalysis() {
           </button>
 
           <button
-            onClick={runAnalysis}
+            onClick={() => void runAnalysis()}
             disabled={loading}
             className="flex items-center gap-2 rounded-2xl bg-primary px-7 py-3.5 text-xs font-black uppercase tracking-[0.2em] text-on-primary shadow-2xl shadow-primary/20 transition-all hover:brightness-110 disabled:opacity-60"
           >
@@ -246,11 +230,11 @@ export function FailureAnalysis() {
         </div>
       </div>
 
-      {errorMessage && (
+      {errorMessage ? (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rounded-xl border border-error/20 bg-error/10 px-5 py-3 text-sm text-error">
           {errorMessage}
         </motion.div>
-      )}
+      ) : null}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
         <div className="group relative overflow-hidden rounded-3xl border border-outline-variant/10 bg-surface-container-low shadow-2xl lg:col-span-8">
@@ -285,15 +269,15 @@ export function FailureAnalysis() {
               <>
                 <WaveformSVG points={result.waveform} />
 
-                {result.anomalies.length > 0 && (
+                {result.anomalies.length > 0 ? (
                   <div className="absolute left-[65%] top-0 h-full w-[15%] border-x border-tertiary/20 bg-tertiary/5">
                     <div className="absolute left-1/2 top-0 z-20 -translate-x-1/2 rounded-b-full bg-tertiary px-3 py-1 text-[9px] font-black uppercase tracking-widest text-on-tertiary shadow-xl">
                       检测到异常
                     </div>
                   </div>
-                )}
+                ) : null}
 
-                {result.anomalies[0] && (
+                {result.anomalies[0] ? (
                   <motion.div
                     initial={{ scale: 0.9, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
@@ -306,9 +290,7 @@ export function FailureAnalysis() {
                         <h4 className="text-sm font-headline font-bold text-on-surface">
                           {formatAnomalyType(result.anomalies[0].type, result.anomalies[0].channel)}
                         </h4>
-                        <p className="text-[11px] leading-relaxed text-on-surface-variant">
-                          {result.anomalies[0].description.slice(0, 80)}...
-                        </p>
+                        <p className="text-[11px] leading-relaxed text-on-surface-variant">{result.anomalies[0].description.slice(0, 80)}...</p>
                         <div className="flex items-center justify-between border-t border-outline-variant/10 pt-3 font-mono text-[10px] font-bold text-tertiary">
                           <span>置信度 {(result.anomalies[0].confidence * 100).toFixed(0)}%</span>
                           <span className="rounded bg-tertiary/10 px-2 py-0.5">{result.anomalies[0].timestamp}</span>
@@ -316,12 +298,10 @@ export function FailureAnalysis() {
                       </div>
                     </div>
                   </motion.div>
-                )}
+                ) : null}
               </>
             ) : (
-              <div className="absolute inset-0 flex items-center justify-center text-sm text-on-surface-variant/40">
-                点击“运行全量诊断”开始分析
-              </div>
+              <div className="absolute inset-0 flex items-center justify-center text-sm text-on-surface-variant/40">点击“运行全量诊断”开始分析</div>
             )}
           </div>
 
@@ -336,9 +316,7 @@ export function FailureAnalysis() {
                 <span className="font-mono text-[10px] font-bold uppercase text-on-surface-variant/70">ANOMALY POINT</span>
               </div>
             </div>
-            <span className="font-mono text-[10px] text-on-surface-variant/50">
-              {result ? `ML Backend: ${result.model_backend}` : ''}
-            </span>
+            <span className="font-mono text-[10px] text-on-surface-variant/50">{result ? `ML Backend: ${result.model_backend}` : ''}</span>
           </div>
         </div>
 
@@ -359,11 +337,7 @@ export function FailureAnalysis() {
             <div className="mt-8 flex items-center justify-between border-t border-outline-variant/15 pt-6">
               <div>
                 <span className="mb-2 block font-mono text-[9px] font-bold uppercase text-on-surface-variant opacity-50">实时良率趋势</span>
-                <span
-                  className={`flex items-center gap-1 font-mono text-sm font-black ${
-                    result && result.yield_trend < 0 ? 'text-error' : 'text-primary'
-                  }`}
-                >
+                <span className={`flex items-center gap-1 font-mono text-sm font-black ${result && result.yield_trend < 0 ? 'text-error' : 'text-primary'}`}>
                   <Activity className="h-3 w-3 animate-pulse" />
                   {result ? `${result.yield_trend > 0 ? '+' : ''}${result.yield_trend.toFixed(2)}% /hr` : '--'}
                 </span>
@@ -371,9 +345,7 @@ export function FailureAnalysis() {
 
               <div className="text-right">
                 <span className="mb-2 block font-mono text-[9px] font-bold uppercase text-on-surface-variant opacity-50">AI 预测 T+4H</span>
-                <span className="font-mono text-sm font-black text-tertiary">
-                  {result ? `${result.yield_predicted.toFixed(1)}%` : '--'}
-                </span>
+                <span className="font-mono text-sm font-black text-tertiary">{result ? `${result.yield_predicted.toFixed(1)}%` : '--'}</span>
               </div>
             </div>
           </section>
@@ -384,7 +356,7 @@ export function FailureAnalysis() {
                 <Microscope className="h-5 w-5 text-secondary" />
                 AI 故障溯源
               </h3>
-              {result && <span className="font-mono text-[9px] text-on-surface-variant/50">{result.anomalies.length} 个事件</span>}
+              {result ? <span className="font-mono text-[9px] text-on-surface-variant/50">{result.anomalies.length} 个事件</span> : null}
             </div>
 
             <div className="max-h-[380px] space-y-3 overflow-y-auto pr-1">
@@ -412,13 +384,9 @@ export function FailureAnalysis() {
                           <div className="flex-1">
                             <div className="mb-2 flex items-center gap-2">
                               <h4 className="text-sm font-bold text-on-surface">{formatAnomalyType(anomaly.type, anomaly.channel)}</h4>
-                              <span className={`rounded px-2 py-0.5 text-[9px] font-bold uppercase ${style.bg} ${style.color}`}>
-                                {style.tag}
-                              </span>
+                              <span className={`rounded px-2 py-0.5 text-[9px] font-bold uppercase ${style.bg} ${style.color}`}>{style.tag}</span>
                             </div>
-                            <p className="text-[11px] italic leading-relaxed text-on-surface-variant opacity-80 group-hover:opacity-100">
-                              {anomaly.description}
-                            </p>
+                            <p className="text-[11px] italic leading-relaxed text-on-surface-variant opacity-80 group-hover:opacity-100">{anomaly.description}</p>
                             <div className="mt-3 flex items-center justify-between">
                               <div>
                                 <span className="text-[9px] font-bold uppercase text-on-surface-variant opacity-50">置信度</span>

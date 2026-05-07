@@ -1,20 +1,17 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   BookOpen,
   CheckCircle2,
   ChevronRight,
-  Code2,
   Copy,
   Cpu,
   Download,
-  FileCode2,
   Link2,
   Loader2,
   Package,
   PlayCircle,
   ShieldAlert,
-  ShieldCheck,
   Terminal,
   Unlink,
   Wand2,
@@ -35,7 +32,9 @@ import {
   type RagStatus,
   type TemplateItem,
 } from '../api/backend';
-import { getArtifactLabel, getFlowLabel, getRunStatusPresentation, getStepLabel } from '../utils/runPresentation';
+import { getArtifactLabel, getFlowLabel, getRunStatusPresentation } from '../utils/runPresentation';
+
+const CODELAB_STORAGE_KEY = 'ate_codelab_page_state';
 
 function highlight(raw: string): string {
   return raw
@@ -49,7 +48,7 @@ function highlight(raw: string): string {
     )
     .replace(/\b(FOVI|UserPMU|UserDIO|CParam|CBIT128|QTMU_PLUS|RS422)\b/g, '<span class="syn-type">$1</span>')
     .replace(/"([^"]*)"/g, '<span class="syn-str">"$1"</span>')
-    .replace(/\b(\d+(?:\.\d+)?(?:e[-+]?\d+)?(?:f)?)\b/g, '<span class="syn-num">$1</span>');
+    .replace(/\b(\d+(?:\.\d+)?(?:e[-+]?\d+)?(?:f)?)\b/g, '<span class="syn-num">$1"</span>'.replace('"</span>', '</span>'));
 }
 
 const CHIP_TYPES = [
@@ -68,7 +67,7 @@ const RUNTIME_STEPS = [
   { agent: 'codegen_planner', label: '测试规划', description: '校验测试项、引脚依赖和工程前置条件。' },
   { agent: 'code_assembler', label: '代码装配', description: '根据模板、企业样例和知识库生成测试代码。' },
   { agent: 'static_validator', label: '静态校验', description: '检查结构、规则、TODO 和明显风险。' },
-  { agent: 'compile_validator', label: '编译预检', description: '用本地桩头做一次快速编译级预检查。' },
+  { agent: 'compile_validator', label: '编译预检', description: '用本地桩头做一次快速编译级预检。' },
   { agent: 'engineering_packager', label: '工程打包', description: '生成工程目录、VECDIO/PGS 和 ZIP 包。' },
 ] as const;
 
@@ -149,17 +148,74 @@ function normalizeRun(run?: AgentRunResult | null) {
   };
 }
 
+interface CodeLabSnapshot {
+  stage: 'idle' | 'loading' | 'done' | 'error';
+  result: CodegenResult | null;
+  errMsg: string;
+  chipType: 'digital' | 'ldo' | 'custom';
+  chipName: string;
+  items: Record<string, boolean>;
+  prompt: string;
+  vcc: number;
+  vout: number;
+  showMore: boolean;
+}
+
+function readStoredCodeLabSnapshot(): CodeLabSnapshot | null {
+  try {
+    const raw = window.sessionStorage.getItem(CODELAB_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CodeLabSnapshot>;
+    return {
+      stage: parsed.stage === 'done' || parsed.stage === 'error' ? parsed.stage : 'idle',
+      result: (parsed.result as CodegenResult | null) || null,
+      errMsg: parsed.errMsg || '',
+      chipType: parsed.chipType === 'ldo' || parsed.chipType === 'custom' ? parsed.chipType : 'digital',
+      chipName: parsed.chipName || 'HD74LS00P',
+      items: parsed.items || { CON: true, FUN: true, VIH: true, VIL: true },
+      prompt: parsed.prompt || '',
+      vcc: typeof parsed.vcc === 'number' ? parsed.vcc : 5.0,
+      vout: typeof parsed.vout === 'number' ? parsed.vout : 3.3,
+      showMore: Boolean(parsed.showMore),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistCodeLabSnapshot(snapshot: CodeLabSnapshot) {
+  try {
+    window.sessionStorage.setItem(CODELAB_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function clearStoredCodeLabSnapshot() {
+  try {
+    window.sessionStorage.removeItem(CODELAB_STORAGE_KEY);
+  } catch {
+    // ignore storage failures
+  }
+}
+
 export function CodeLab() {
-  const [chipType, setChipType] = useState<'digital' | 'ldo' | 'custom'>('digital');
-  const [chipName, setChipName] = useState('HD74LS00P');
-  const [items, setItems] = useState<Record<string, boolean>>({ CON: true, FUN: true, VIH: true, VIL: true });
-  const [prompt, setPrompt] = useState('');
-  const [vcc, setVcc] = useState(5.0);
-  const [vout, setVout] = useState(3.3);
+  const restoredSnapshot =
+    typeof window !== 'undefined'
+      ? readStoredCodeLabSnapshot()
+      : null;
+  const shouldKeepRestoredDraft = useRef(Boolean(restoredSnapshot));
+
+  const [chipType, setChipType] = useState<'digital' | 'ldo' | 'custom'>(restoredSnapshot?.chipType || 'digital');
+  const [chipName, setChipName] = useState(restoredSnapshot?.chipName || 'HD74LS00P');
+  const [items, setItems] = useState<Record<string, boolean>>(restoredSnapshot?.items || { CON: true, FUN: true, VIH: true, VIL: true });
+  const [prompt, setPrompt] = useState(restoredSnapshot?.prompt || '');
+  const [vcc, setVcc] = useState(restoredSnapshot?.vcc ?? 5.0);
+  const [vout, setVout] = useState(restoredSnapshot?.vout ?? 3.3);
   const [templates, setTemplates] = useState<{ digital: TemplateItem[]; ldo: TemplateItem[] }>({ digital: [], ldo: [] });
-  const [stage, setStage] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
-  const [result, setResult] = useState<CodegenResult | null>(null);
-  const [errMsg, setErrMsg] = useState('');
+  const [stage, setStage] = useState<'idle' | 'loading' | 'done' | 'error'>(restoredSnapshot?.stage || 'idle');
+  const [result, setResult] = useState<CodegenResult | null>(restoredSnapshot?.result || null);
+  const [errMsg, setErrMsg] = useState(restoredSnapshot?.errMsg || '');
   const [copied, setCopied] = useState(false);
 
   const [m1FileId, setM1FileId] = useState<string | null>(null);
@@ -176,11 +232,7 @@ export function CodeLab() {
   const [allowManualChipType, setAllowManualChipType] = useState(false);
 
   const [ragStatus, setRagStatus] = useState<RagStatus | null>(null);
-  const [showChunks, setShowChunks] = useState(false);
-  const [showQualityDetails, setShowQualityDetails] = useState(false);
-  const [showCompileDetails, setShowCompileDetails] = useState(false);
-  const [showPackageDetails, setShowPackageDetails] = useState(false);
-  const [showEngineeringDetails, setShowEngineeringDetails] = useState(false);
+  const [showMore, setShowMore] = useState(restoredSnapshot?.showMore || false);
 
   const linkedFromModule1 = Boolean(m1FileId);
   const chipTypeLocked = linkedFromModule1 && !allowManualChipType;
@@ -188,9 +240,7 @@ export function CodeLab() {
 
   useEffect(() => {
     getCodeTemplates().then(response => {
-      if (response.status === 'success' && response.data) {
-        setTemplates(response.data);
-      }
+      if (response.status === 'success' && response.data) setTemplates(response.data);
     });
 
     let fileId = sessionStorage.getItem('ate_last_file_id');
@@ -225,25 +275,45 @@ export function CodeLab() {
 
     getRagStatus()
       .then(response => {
-        if (response.status === 'success' && response.data) {
-          setRagStatus(response.data);
-        }
+        if (response.status === 'success' && response.data) setRagStatus(response.data);
       })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
+    if (shouldKeepRestoredDraft.current) {
+      shouldKeepRestoredDraft.current = false;
+      return;
+    }
     const fallback = DEFAULTS[chipType];
     setVcc(fallback.vcc);
     if (!m1ChipName) setChipName(fallback.name);
-    if (!linkedFromModule1) {
-      setItems(Object.fromEntries(fallback.items.map(item => [item, true])));
-    }
+    if (!linkedFromModule1) setItems(Object.fromEntries(fallback.items.map(item => [item, true])));
   }, [chipType, linkedFromModule1, m1ChipName]);
 
   useEffect(() => {
-    const payload = chipTypeLocked && m1FileId ? { file_id: m1FileId } : { chip_type: effectiveChipType };
+    if (stage === 'loading') return;
+    const snapshot: CodeLabSnapshot = {
+      stage,
+      result,
+      errMsg,
+      chipType,
+      chipName,
+      items,
+      prompt,
+      vcc,
+      vout,
+      showMore,
+    };
+    if (stage === 'idle' && !result && !errMsg) {
+      clearStoredCodeLabSnapshot();
+      return;
+    }
+    persistCodeLabSnapshot(snapshot);
+  }, [chipName, chipType, errMsg, items, prompt, result, showMore, stage, vcc, vout]);
 
+  useEffect(() => {
+    const payload = chipTypeLocked && m1FileId ? { file_id: m1FileId } : { chip_type: effectiveChipType };
     recommendCodeItems(payload)
       .then(response => {
         if (response.status !== 'success' || !response.data) return;
@@ -254,12 +324,9 @@ export function CodeLab() {
         setDetectedParams(response.data.detected_params || []);
         setRecommendationReasons(response.data.reason_summary || []);
         setRecommendationSource(response.data.source === 'module1' ? 'module1' : 'manual');
-
         setItems(previous => {
           const hasSelection = Object.values(previous).some(Boolean);
-          if (chipTypeLocked || !hasSelection) {
-            return Object.fromEntries(nextRecommended.map(item => [item, true]));
-          }
+          if (chipTypeLocked || !hasSelection) return Object.fromEntries(nextRecommended.map(item => [item, true]));
           return previous;
         });
       })
@@ -278,11 +345,7 @@ export function CodeLab() {
   const recommendedSet = new Set(recommendedItems);
   const optionalSet = new Set(optionalItems);
   const orderedTemplates = [...baseTemplates].sort((a, b) => {
-    const score = (itemId: string) => {
-      if (recommendedSet.has(itemId)) return 0;
-      if (optionalSet.has(itemId)) return 1;
-      return 2;
-    };
+    const score = (itemId: string) => (recommendedSet.has(itemId) ? 0 : optionalSet.has(itemId) ? 1 : 2);
     const diff = score(a.id) - score(b.id);
     return diff !== 0 ? diff : a.id.localeCompare(b.id);
   });
@@ -294,32 +357,13 @@ export function CodeLab() {
   const resultFilename = result?.filename || 'output.cpp';
   const hasGeneratedCode = Boolean(resultCode);
   const hasBlockingPlan = Boolean(safePlan?.errors.length);
-  const packageHasVector = packageFiles.some(file => file.relative_path.endsWith('.vecdio'));
-  const packageHasPgs = packageFiles.some(file => file.relative_path.endsWith('.pgs'));
-  const packageHighlights = packageFiles.filter(file =>
-    /\.(vecdio|pgs|json|sln|vcxproj)$/i.test(file.relative_path) || file.relative_path.endsWith('source/test.cpp'),
-  );
-  const vectorSummary = {
-    files: packageFiles.filter(file => /\.vecdio$/i.test(file.relative_path)).length,
-    plans: packageFiles.filter(file => /vector_plan\.json$/i.test(file.relative_path)).length,
-  };
-  const pgsSummary = {
-    files: packageFiles.filter(file => /\.pgs$/i.test(file.relative_path)).length,
-    plans: packageFiles.filter(file => /pgs_plan\.json$/i.test(file.relative_path)).length,
-  };
-  const engineeringSummary = {
-    jsons: packageFiles.filter(file => /\.json$/i.test(file.relative_path)).length,
-    projects: packageFiles.filter(file => /\.(sln|vcxproj)$/i.test(file.relative_path)).length,
-  };
-
   const runtimeSteps = useMemo(() => {
     const stepMap = new Map((safeRun?.steps || []).map(step => [step.agent, step]));
     return RUNTIME_STEPS.map(base => {
       const step = stepMap.get(base.agent);
-      const loadingStep = stage === 'loading' && !step;
       return {
         ...base,
-        status: step?.status || (loadingStep ? 'running' : stage === 'idle' ? 'pending' : 'pending'),
+        status: step?.status || (stage === 'loading' ? 'running' : 'pending'),
         warnings: step?.warnings || [],
         errors: step?.errors || [],
         artifacts: step?.artifacts || [],
@@ -336,8 +380,9 @@ export function CodeLab() {
       return accumulator;
     }, new Map<string, number>()),
   );
-
-  const currentRunStatus = safeRun ? getRunStatusPresentation(safeRun.status) : getRunStatusPresentation(stage === 'loading' ? 'running' : 'pending');
+  const currentRunStatus = safeRun
+    ? getRunStatusPresentation(safeRun.status)
+    : getRunStatusPresentation(stage === 'loading' ? 'running' : 'pending');
 
   const toggle = (id: string) => setItems(previous => ({ ...previous, [id]: !previous[id] }));
 
@@ -400,7 +445,7 @@ export function CodeLab() {
       <div className="flex flex-col gap-2">
         <h1 className="font-headline text-4xl font-bold tracking-tight text-on-surface">代码实验室</h1>
         <p className="max-w-4xl text-sm leading-relaxed text-on-surface-variant">
-          这里不再只是一键出代码的黑盒页面。模块三会先生成一次运行记录，再按“测试规划、代码装配、静态校验、编译预检、工程打包”的顺序输出结果和工程包。
+          这里不再只是“一键出代码”的黑盒页面。模块三会先创建一次运行记录，再按“测试规划、代码装配、静态校验、编译预检、工程打包”的顺序输出结果和工程包。
         </p>
       </div>
 
@@ -444,9 +489,7 @@ export function CodeLab() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
           className={`flex items-center gap-3 rounded-2xl border px-5 py-2.5 text-xs ${
-            ragStatus.ready
-              ? 'border-secondary/25 bg-secondary/10 text-on-surface'
-              : 'border-outline-variant/20 bg-surface-container text-on-surface-variant'
+            ragStatus.ready ? 'border-secondary/25 bg-secondary/10 text-on-surface' : 'border-outline-variant/20 bg-surface-container text-on-surface-variant'
           }`}
         >
           <BookOpen className={`h-4 w-4 shrink-0 ${ragStatus.ready ? 'text-secondary' : 'text-on-surface-variant/50'}`} />
@@ -461,11 +504,7 @@ export function CodeLab() {
               <span className="text-on-surface-variant/60">当前未加载知识库，系统会优先使用企业样例和内置模板。</span>
             )}
           </div>
-          <span
-            className={`rounded px-2 py-0.5 text-[9px] font-mono ${
-              ragStatus.ready ? 'bg-secondary/20 text-secondary' : 'bg-surface-container-highest text-on-surface-variant/40'
-            }`}
-          >
+          <span className={`rounded px-2 py-0.5 text-[9px] font-mono ${ragStatus.ready ? 'bg-secondary/20 text-secondary' : 'bg-surface-container-highest text-on-surface-variant/40'}`}>
             {ragStatus.ready ? 'ONLINE' : 'OFFLINE'}
           </span>
         </motion.div>
@@ -507,16 +546,14 @@ export function CodeLab() {
                   onClick={() => setChipType(item.id)}
                   disabled={chipTypeLocked}
                   className={`rounded-xl border p-3 text-left transition-all ${
-                    effectiveChipType === item.id
-                      ? 'border-primary bg-primary/10'
-                      : 'border-outline-variant/20 bg-surface-container hover:bg-primary/5'
+                    effectiveChipType === item.id ? 'border-primary bg-primary/10' : 'border-outline-variant/20 bg-surface-container hover:bg-primary/5'
                   } ${chipTypeLocked ? 'cursor-not-allowed opacity-55 hover:bg-surface-container' : ''}`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className={`text-sm font-bold ${effectiveChipType === item.id ? 'text-primary' : 'text-on-surface'}`}>{item.label}</div>
-                    {linkedFromModule1 && m1ChipType === item.id && chipTypeLocked && (
+                    {linkedFromModule1 && m1ChipType === item.id && chipTypeLocked ? (
                       <span className="rounded-md bg-primary/15 px-1.5 py-0.5 text-[9px] font-bold text-primary">模块一</span>
-                    )}
+                    ) : null}
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] text-on-surface-variant/50">{item.sub}</div>
                 </button>
@@ -555,7 +592,7 @@ export function CodeLab() {
               <div className="mb-3 rounded-xl border border-secondary/20 bg-secondary/10 px-3 py-2.5 text-[11px] text-on-surface-variant/80">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-bold text-secondary">{recommendationSource === 'module1' ? '自动推荐测试项' : '按当前类型推荐测试项'}</span>
-                  {recommendedItems.length > 0 && <span className="font-mono text-secondary">{recommendedItems.length} 项</span>}
+                  {recommendedItems.length > 0 ? <span className="font-mono text-secondary">{recommendedItems.length} 项</span> : null}
                 </div>
                 <div className="mt-1.5 leading-relaxed">
                   {chipTypeLocked
@@ -578,20 +615,16 @@ export function CodeLab() {
                       items[template.id] ? 'border border-primary/30 bg-primary/10' : 'border border-transparent hover:bg-surface-container'
                     }`}
                   >
-                    <div
-                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 transition-colors ${
-                        items[template.id] ? 'border-primary bg-primary' : 'border-outline-variant/50'
-                      }`}
-                    >
-                      {items[template.id] && <CheckCircle2 className="h-3 w-3 text-on-primary" />}
+                    <div className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 transition-colors ${items[template.id] ? 'border-primary bg-primary' : 'border-outline-variant/50'}`}>
+                      {items[template.id] ? <CheckCircle2 className="h-3 w-3 text-on-primary" /> : null}
                     </div>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <div className={`font-mono text-xs font-bold ${items[template.id] ? 'text-primary' : 'text-on-surface'}`}>{template.id}</div>
-                        {isRecommended && <span className="rounded bg-secondary/15 px-1.5 py-0.5 text-[9px] font-bold text-secondary">推荐</span>}
-                        {!isRecommended && isOptional && (
+                        {isRecommended ? <span className="rounded bg-secondary/15 px-1.5 py-0.5 text-[9px] font-bold text-secondary">推荐</span> : null}
+                        {!isRecommended && isOptional ? (
                           <span className="rounded bg-surface-container-highest px-1.5 py-0.5 text-[9px] font-bold text-on-surface-variant/60">可选</span>
-                        )}
+                        ) : null}
                       </div>
                       <div className="mt-0.5 text-[10px] leading-relaxed text-on-surface-variant/65">{template.desc}</div>
                     </div>
@@ -638,7 +671,7 @@ export function CodeLab() {
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <SmallTitle>运行主线</SmallTitle>
-                <h2 className="text-xl font-bold text-on-surface">这次代码生成先创建 run，再逐步推进各阶段</h2>
+                <h2 className="text-xl font-bold text-on-surface">这次代码生成会先创建 run，再逐步推进各阶段</h2>
                 <p className="mt-2 text-sm leading-relaxed text-on-surface-variant/75">
                   这里优先展示运行阶段和阻断点，再展示最终代码结果。更详细的历史记录和跨次对比，请去“运行中心”查看。
                 </p>
@@ -662,16 +695,10 @@ export function CodeLab() {
                       <span className="rounded-md bg-surface px-2 py-0.5">警告 {step.warnings.length}</span>
                       <span className="rounded-md bg-surface px-2 py-0.5">错误 {step.errors.length}</span>
                     </div>
-                    {step.errors.length > 0 && (
-                      <div className="mt-3 rounded-lg border border-error/20 bg-error/5 px-3 py-2 text-[10px] leading-relaxed text-error">
-                        {step.errors[0]}
-                      </div>
-                    )}
-                    {!step.errors.length && step.warnings.length > 0 && (
-                      <div className="mt-3 rounded-lg border border-tertiary/20 bg-tertiary/5 px-3 py-2 text-[10px] leading-relaxed text-tertiary">
-                        {step.warnings[0]}
-                      </div>
-                    )}
+                    {step.errors.length > 0 ? <div className="mt-3 rounded-lg border border-error/20 bg-error/5 px-3 py-2 text-[10px] leading-relaxed text-error">{step.errors[0]}</div> : null}
+                    {!step.errors.length && step.warnings.length > 0 ? (
+                      <div className="mt-3 rounded-lg border border-tertiary/20 bg-tertiary/5 px-3 py-2 text-[10px] leading-relaxed text-tertiary">{step.warnings[0]}</div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -714,14 +741,8 @@ export function CodeLab() {
 
               <div className="relative flex-1 overflow-hidden">
                 <AnimatePresence mode="wait">
-                  {stage === 'idle' && (
-                    <motion.div
-                      key="idle"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="flex h-full flex-col items-center justify-center gap-6 px-8 py-24 text-center"
-                    >
+                  {stage === 'idle' ? (
+                    <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex h-full flex-col items-center justify-center gap-6 px-8 py-24 text-center">
                       <div className="rounded-2xl bg-primary/10 p-5">
                         <PlayCircle className="h-12 w-12 text-primary" />
                       </div>
@@ -732,16 +753,10 @@ export function CodeLab() {
                         </p>
                       </div>
                     </motion.div>
-                  )}
+                  ) : null}
 
-                  {stage === 'loading' && (
-                    <motion.div
-                      key="loading"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="flex h-full flex-col items-center justify-center gap-6 py-24 text-center"
-                    >
+                  {stage === 'loading' ? (
+                    <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex h-full flex-col items-center justify-center gap-6 py-24 text-center">
                       <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/10">
                         <Loader2 className="h-10 w-10 animate-spin text-primary" />
                       </div>
@@ -750,16 +765,10 @@ export function CodeLab() {
                         <p className="text-sm text-on-surface-variant/70">请先关注上方阶段状态，代码和工程包会在后续阶段逐步补齐。</p>
                       </div>
                     </motion.div>
-                  )}
+                  ) : null}
 
-                  {stage === 'error' && (
-                    <motion.div
-                      key="error"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="flex h-full flex-col items-center justify-center gap-4 px-8 py-24 text-center"
-                    >
+                  {stage === 'error' ? (
+                    <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex h-full flex-col items-center justify-center gap-4 px-8 py-24 text-center">
                       <div className="rounded-2xl bg-error/10 p-4">
                         <AlertCircle className="h-10 w-10 text-error" />
                       </div>
@@ -767,7 +776,7 @@ export function CodeLab() {
                         <p className="mb-2 font-headline text-xl font-bold text-on-surface">本次运行被阻断</p>
                         <p className="text-sm leading-relaxed text-on-surface-variant">{errMsg}</p>
                       </div>
-                      {hasBlockingPlan && (
+                      {hasBlockingPlan ? (
                         <div className="w-full max-w-2xl rounded-2xl border border-error/20 bg-error/5 p-4 text-left">
                           <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-error">
                             <ShieldAlert className="h-4 w-4" />
@@ -781,14 +790,14 @@ export function CodeLab() {
                             ))}
                           </div>
                         </div>
-                      )}
+                      ) : null}
                       <button type="button" onClick={() => setStage('idle')} className="text-xs text-primary underline transition-opacity hover:opacity-70">
                         返回重试
                       </button>
                     </motion.div>
-                  )}
+                  ) : null}
 
-                  {stage === 'done' && hasGeneratedCode && (
+                  {stage === 'done' && hasGeneratedCode ? (
                     <motion.div key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex h-full overflow-auto">
                       <div className="min-w-[3rem] shrink-0 select-none border-r border-white/5 bg-[#161b22] py-5 pl-3 pr-4 font-mono text-[11px] leading-5 text-gray-600">
                         {resultCode.split('\n').map((_, index) => (
@@ -800,7 +809,7 @@ export function CodeLab() {
                         dangerouslySetInnerHTML={{ __html: highlight(resultCode) }}
                       />
                     </motion.div>
-                  )}
+                  ) : null}
                 </AnimatePresence>
               </div>
             </div>
@@ -808,7 +817,7 @@ export function CodeLab() {
             <div className="flex flex-col gap-4">
               <section className="rounded-2xl border border-secondary/20 bg-surface-container-low p-5 shadow-sm">
                 <SmallTitle>推荐依据</SmallTitle>
-                {detectedParams.length > 0 && (
+                {detectedParams.length > 0 ? (
                   <div className="mb-3">
                     <div className="mb-2 text-[9px] uppercase tracking-widest text-on-surface-variant/50">命中参数</div>
                     <div className="flex flex-wrap gap-1.5">
@@ -819,7 +828,7 @@ export function CodeLab() {
                       ))}
                     </div>
                   </div>
-                )}
+                ) : null}
                 {recommendationReasons.length > 0 ? (
                   <div className="flex flex-col gap-2">
                     {recommendationReasons.slice(0, 3).map(reason => (
@@ -830,12 +839,12 @@ export function CodeLab() {
                   </div>
                 ) : (
                   <div className="text-[11px] leading-relaxed text-on-surface-variant/75">
-                    当前会优先结合模块一结果、企业样例和知识库推荐测试项。这里主要用来解释“为什么选这些项”，不是主操作区。
+                    当前会优先结合模块一结果、企业样例和知识库推荐测试项。这里主要用于解释“为什么选这些项”，不是主操作区。
                   </div>
                 )}
               </section>
 
-              {safeRun && (
+              {safeRun ? (
                 <section className="rounded-2xl border border-outline-variant/10 bg-surface-container-low p-5 shadow-sm">
                   <SmallTitle>本次运行摘要</SmallTitle>
                   <div className="font-mono text-sm font-bold text-on-surface">{safeRun.run_id}</div>
@@ -845,7 +854,7 @@ export function CodeLab() {
                     <StatPill label="需关注" value={blockedSteps} tone="tertiary" />
                     <StatPill label="产物" value={safeRun.artifacts.length} tone="secondary" />
                   </div>
-                  {artifactTypeSummary.length > 0 && (
+                  {artifactTypeSummary.length > 0 ? (
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {artifactTypeSummary.slice(0, 4).map(([type, count]) => (
                         <span key={type} className="rounded-md border border-secondary/20 bg-surface px-2 py-1 text-[10px] font-mono text-secondary">
@@ -853,20 +862,21 @@ export function CodeLab() {
                         </span>
                       ))}
                     </div>
-                  )}
+                  ) : null}
                 </section>
-              )}
+              ) : null}
 
-              {(result || safePlan) && (
+              {(result || safePlan) ? (
                 <section className="rounded-2xl border border-outline-variant/10 bg-surface-container-low p-5 shadow-sm">
                   <SmallTitle>交付摘要</SmallTitle>
-                  {result && hasGeneratedCode && (
+                  {result && hasGeneratedCode ? (
                     <div className="mb-3 grid grid-cols-2 gap-2">
                       <StatPill label="总行数" value={result.lines} />
                       <StatPill label="测试函数" value={result.functions} />
                     </div>
-                  )}
-                  {result?.static_analysis && (
+                  ) : null}
+
+                  {result?.static_analysis ? (
                     <div className="rounded-xl border border-outline-variant/10 bg-surface-container px-3 py-3 text-[11px]">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-semibold text-on-surface">代码质量</span>
@@ -874,8 +884,9 @@ export function CodeLab() {
                       </div>
                       <div className="mt-1 text-on-surface-variant/75">{result.static_analysis.summary}</div>
                     </div>
-                  )}
-                  {result?.compile_validation?.attempted && (
+                  ) : null}
+
+                  {result?.compile_validation?.attempted ? (
                     <div className="mt-3 rounded-xl border border-outline-variant/10 bg-surface-container px-3 py-3 text-[11px]">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-semibold text-on-surface">编译预检</span>
@@ -883,21 +894,20 @@ export function CodeLab() {
                           {result.compile_validation.passed ? '通过' : '需修正'}
                         </span>
                       </div>
-                      {result.compile_validation.diagnostics?.[0] && (
-                        <div className="mt-1 line-clamp-3 text-on-surface-variant/75">{result.compile_validation.diagnostics[0]}</div>
-                      )}
+                      {result.compile_validation.diagnostics?.[0] ? <div className="mt-1 line-clamp-3 text-on-surface-variant/75">{result.compile_validation.diagnostics[0]}</div> : null}
                     </div>
-                  )}
-                  {result?.package_export && (
+                  ) : null}
+
+                  {result?.package_export ? (
                     <div className="mt-3 rounded-xl border border-outline-variant/10 bg-surface-container px-3 py-3 text-[11px]">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-semibold text-on-surface">工程包</span>
                         <span className="font-bold text-secondary">{packageFiles.length} 个文件</span>
                       </div>
                       <div className="mt-1 text-on-surface-variant/75">
-                        VECDIO {packageHasVector ? '已准备' : '未准备'} / PGS {packageHasPgs ? '已准备' : '未准备'}
+                        {result.package_export.download_url ? '已生成可下载工程包。' : '工程包已生成，但当前没有可下载链接。'}
                       </div>
-                      {result.package_export.download_url && (
+                      {result.package_export.download_url ? (
                         <a
                           href={resolveBackendUrl(result.package_export.download_url)}
                           className="mt-3 inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-on-primary transition-all hover:brightness-110"
@@ -905,23 +915,19 @@ export function CodeLab() {
                           <Download className="h-3.5 w-3.5" />
                           下载工程包 ZIP
                         </a>
-                      )}
+                      ) : null}
                     </div>
-                  )}
+                  ) : null}
 
-                  <button
-                    type="button"
-                    onClick={() => setShowPackageDetails(value => !value)}
-                    className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-primary"
-                  >
-                    <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showPackageDetails ? 'rotate-90' : ''}`} />
-                    {showPackageDetails ? '收起更多细节' : '查看更多细节'}
+                  <button type="button" onClick={() => setShowMore(value => !value)} className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-primary">
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showMore ? 'rotate-90' : ''}`} />
+                    {showMore ? '收起更多细节' : '查看更多细节'}
                   </button>
 
                   <AnimatePresence initial={false}>
-                    {showPackageDetails && (
+                    {showMore ? (
                       <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                        {safePlan && (
+                        {safePlan ? (
                           <div className="mt-3 rounded-xl border border-outline-variant/10 bg-surface-container px-3 py-3">
                             <div className="mb-2 text-[9px] uppercase tracking-widest text-on-surface-variant/50">生成计划</div>
                             <div className="mb-2 grid grid-cols-2 gap-2">
@@ -936,41 +942,29 @@ export function CodeLab() {
                               ))}
                             </div>
                           </div>
-                        )}
-                        {result?.package_export && (
-                          <div className="mt-3 rounded-xl border border-outline-variant/10 bg-surface-container px-3 py-3">
-                            <div className="mb-2 text-[9px] uppercase tracking-widest text-on-surface-variant/50">关键文件</div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {packageHighlights.slice(0, 8).map(file => (
-                                <span key={`highlight-${file.relative_path}`} className="rounded-md bg-surface-container-high px-2 py-1 font-mono text-[10px] text-on-surface">
-                                  {file.relative_path}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {result?.retrieved_chunks && result.retrieved_chunks.length > 0 && (
+                        ) : null}
+
+                        {result?.retrieved_chunks && result.retrieved_chunks.length > 0 ? (
                           <div className="mt-3 rounded-xl border border-outline-variant/10 bg-surface-container px-3 py-3">
                             <div className="mb-2 text-[9px] uppercase tracking-widest text-on-surface-variant/50">RAG 片段</div>
                             <div className="flex flex-col gap-2">
                               {result.retrieved_chunks.slice(0, 3).map((chunk, index) => (
                                 <div key={index} className="rounded-lg border-l-2 border-secondary/30 bg-secondary/5 p-3 text-[10px] text-on-surface-variant">
-                                  <div className="mb-1 font-mono font-bold text-secondary">{chunk.source} · 评分 {chunk.score}</div>
+                                  <div className="mb-1 font-mono font-bold text-secondary">{chunk.source} 路 评分 {chunk.score}</div>
                                   <p className="line-clamp-3 leading-relaxed opacity-80">{chunk.text}</p>
                                 </div>
                               ))}
                             </div>
                           </div>
-                        )}
+                        ) : null}
                       </motion.div>
-                    )}
+                    ) : null}
                   </AnimatePresence>
                 </section>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );

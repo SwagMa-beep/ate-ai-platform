@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronRight,
   CloudUpload,
   Cpu,
@@ -14,9 +13,15 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { getDownloadUrl, type ExtractionResult, type PinDefinition, type RangeRecommendation, type TaskStatusResult, type UploadResult } from '../api/backend';
+import {
+  getDownloadUrl,
+  type ExtractionResult,
+  type PinDefinition,
+  type RangeRecommendation,
+  type TaskStatusResult,
+  type UploadResult,
+} from '../api/backend';
 import { extractionStore, type ExtractionState, type Stage } from '../store/extractionStore';
-import { getFlowLabel, getRunStatusPresentation } from '../utils/runPresentation';
 
 function downloadFile(url: string, filename: string) {
   try {
@@ -53,12 +58,22 @@ interface UploadZoneProps {
   onReset: () => void;
 }
 
-const UploadZone = ({ dragOver, onDragOver, onDrop, onFileSelect, onFileInput, fileInputRef, stage, error, onReset }: UploadZoneProps) => (
+const UploadZone = ({
+  dragOver,
+  onDragOver,
+  onDrop,
+  onFileSelect,
+  onFileInput,
+  fileInputRef,
+  stage,
+  error,
+  onReset,
+}: UploadZoneProps) => (
   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="flex flex-col gap-8">
     <div>
       <h1 className="mb-2 font-headline text-4xl font-bold tracking-tight text-on-surface">数据手册智能提取</h1>
       <p className="max-w-2xl text-sm leading-relaxed text-on-surface-variant">
-        上传芯片数据手册 PDF，系统会自动提取引脚定义、测试参数、量程建议，并生成结构化测试计划结果。
+        上传芯片数据手册 PDF，系统会自动提取引脚定义、测试参数和量程建议，并生成结构化测试计划结果。
       </p>
     </div>
 
@@ -71,7 +86,9 @@ const UploadZone = ({ dragOver, onDragOver, onDrop, onFileSelect, onFileInput, f
       onDrop={onDrop}
       onClick={onFileSelect}
       className={`relative flex cursor-pointer flex-col items-center justify-center gap-6 rounded-2xl border-2 border-dashed p-16 transition-all ${
-        dragOver ? 'border-primary bg-primary/10 shadow-[0_0_40px_#53ddfc20]' : 'border-outline-variant/30 bg-surface-container-low hover:border-primary/50 hover:bg-primary/5'
+        dragOver
+          ? 'border-primary bg-primary/10 shadow-[0_0_40px_#53ddfc20]'
+          : 'border-outline-variant/30 bg-surface-container-low hover:border-primary/50 hover:bg-primary/5'
       }`}
     >
       <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={onFileInput} />
@@ -80,7 +97,7 @@ const UploadZone = ({ dragOver, onDragOver, onDrop, onFileSelect, onFileInput, f
       </div>
       <div className="text-center">
         <p className="mb-2 font-headline text-xl font-bold text-on-surface">{dragOver ? '松开以上传文件' : '拖拽 PDF 到这里'}</p>
-        <p className="text-sm text-on-surface-variant">或点击选择文件 · 最大 50MB</p>
+        <p className="text-sm text-on-surface-variant">或点击选择文件，最大 50MB</p>
       </div>
       <button className="flex items-center gap-3 rounded-xl bg-primary px-8 py-4 text-xs font-bold uppercase tracking-widest text-on-primary shadow-lg shadow-primary/10 transition-all hover:brightness-110">
         <Upload className="h-5 w-5" />
@@ -89,7 +106,7 @@ const UploadZone = ({ dragOver, onDragOver, onDrop, onFileSelect, onFileInput, f
     </div>
 
     <AnimatePresence>
-      {stage === 'error' && (
+      {stage === 'error' ? (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -102,12 +119,22 @@ const UploadZone = ({ dragOver, onDragOver, onDrop, onFileSelect, onFileInput, f
             <X className="h-4 w-4 text-error" />
           </button>
         </motion.div>
-      )}
+      ) : null}
     </AnimatePresence>
   </motion.div>
 );
 
-const ProgressView = ({ progress, message, fileInfo, stage }: { progress: number; message: string; fileInfo: UploadResult | null; stage: Stage }) => (
+const ProgressView = ({
+  progress,
+  message,
+  fileInfo,
+  stage,
+}: {
+  progress: number;
+  message: string;
+  fileInfo: UploadResult | null;
+  stage: Stage;
+}) => (
   <motion.div
     initial={{ opacity: 0, scale: 0.97 }}
     animate={{ opacity: 1, scale: 1 }}
@@ -124,7 +151,7 @@ const ProgressView = ({ progress, message, fileInfo, stage }: { progress: number
 
     <div>
       <p className="mb-2 font-headline text-2xl font-bold text-on-surface">{message}</p>
-      {fileInfo && <p className="font-mono text-sm text-on-surface-variant">{fileInfo.filename} · {fileInfo.size_mb} MB</p>}
+      {fileInfo ? <p className="font-mono text-sm text-on-surface-variant">{fileInfo.filename} 路 {fileInfo.size_mb} MB</p> : null}
     </div>
 
     <div className="h-2 w-full max-w-md overflow-hidden rounded-full bg-surface-container-highest">
@@ -245,22 +272,22 @@ function TaskCenter({ tasks, activeTaskId }: { tasks: TaskStatusResult[]; active
                 </div>
 
                 <div className="flex gap-2">
-                  {isRetryable && (
+                  {isRetryable ? (
                     <button
                       onClick={() => extractionStore.retryTask(task.task_id)}
                       className="rounded-lg border border-outline-variant/20 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant transition-colors hover:bg-surface-container"
                     >
                       重试
                     </button>
-                  )}
-                  {isProcessing && (
+                  ) : null}
+                  {isProcessing ? (
                     <button
                       onClick={() => extractionStore.cancelTask(task.task_id)}
                       className="rounded-lg border border-tertiary/20 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-tertiary transition-colors hover:bg-tertiary/10"
                     >
                       取消
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );
@@ -289,6 +316,7 @@ function ResultView({
   confidence: number;
 }) {
   if (!result || !fileInfo) return null;
+
   const stats = result.statistics ?? {
     total: 0,
     A_class: 0,
@@ -304,7 +332,13 @@ function ResultView({
   const doneSteps = run?.steps?.filter(step => step.status === 'completed').length ?? 0;
   const blockedSteps = run?.steps?.filter(step => step.status === 'failed').length ?? 0;
   const runStatusLabel =
-    run?.status === 'completed' ? '已完成' : run?.status === 'failed' ? '已阻断' : run?.status === 'processing' ? '进行中' : '未记录';
+    run?.status === 'completed'
+      ? '已完成'
+      : run?.status === 'failed'
+        ? '已阻断'
+        : run?.status === 'processing'
+          ? '进行中'
+          : '未记录';
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-8">
@@ -324,14 +358,14 @@ function ResultView({
         </button>
       </div>
 
-      {run && (
+      {run ? (
         <section className="rounded-2xl border border-outline-variant/10 bg-surface-container-low p-5 shadow-lg">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.25em] text-primary">本次运行摘要</div>
               <h3 className="font-headline text-xl font-bold text-on-surface">提取结果已写入运行中心</h3>
               <p className="mt-1 text-sm text-on-surface-variant">
-                提取页保持主操作视图，详细流程和中间产物可以去“运行中心”回看。
+                提取页保留主操作视图，详细流程和中间产物可以去“运行中心”回看。
               </p>
             </div>
             <div className="rounded-xl border border-outline-variant/10 bg-surface-container px-4 py-3">
@@ -354,7 +388,7 @@ function ResultView({
             ))}
           </div>
         </section>
-      )}
+      ) : null}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
         <section className="relative overflow-hidden rounded-2xl border border-outline-variant/10 bg-surface-container-low p-8 shadow-2xl lg:col-span-12">
@@ -368,11 +402,11 @@ function ResultView({
                   <span className="relative inline-flex h-3 w-3 rounded-full bg-primary" />
                 </span>
                 <span className="mr-2 text-[10px] font-bold uppercase tracking-[0.3em] text-primary">提取完成</span>
-                {result.test_scenario && (
+                {result.test_scenario ? (
                   <span className="rounded border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-primary">
                     {result.test_scenario}
                   </span>
-                )}
+                ) : null}
               </div>
 
               <div className="mb-4 flex items-center gap-4">
@@ -398,8 +432,8 @@ function ResultView({
                 ['提取参数', stats.total, 'text-on-surface'],
                 ['引脚数', result.pin_count, 'text-on-surface'],
               ].map(([label, value, color], index) => (
-                <React.Fragment key={label}>
-                  {index > 0 && <div className="h-auto w-px bg-outline-variant/20" />}
+                <React.Fragment key={String(label)}>
+                  {index > 0 ? <div className="h-auto w-px bg-outline-variant/20" /> : null}
                   <div className="flex flex-col gap-1">
                     <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant">{label}</span>
                     <span className={`font-headline text-4xl font-bold tracking-tighter ${color}`}>{value}</span>
@@ -458,11 +492,11 @@ function ResultView({
               ) : (
                 <div className="py-12 text-center text-sm text-on-surface-variant/50">未提取到引脚定义，部分器件场景可能不包含引脚表。</div>
               )}
-              {pins.length > 20 && (
+              {pins.length > 20 ? (
                 <div className="border-t border-outline-variant/10 p-4 text-center text-xs text-on-surface-variant/50">
-                  仅展示前 20 条，共 {pins.length} 条 · 下载结果 JSON 查看完整数据
+                  仅展示前 20 条，共 {pins.length} 条，下载结果 JSON 可查看完整数据
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
@@ -484,7 +518,7 @@ function ResultView({
                 ['DC 测试项', stats.dc_items, 'text-on-surface'],
                 ['AC 测试项', stats.ac_items, 'text-on-surface'],
               ].map(([label, value, color]) => (
-                <div key={label} className="flex flex-col gap-1 rounded-xl bg-surface-container p-4">
+                <div key={String(label)} className="flex flex-col gap-1 rounded-xl bg-surface-container p-4">
                   <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/60">{label}</span>
                   <span className={`font-headline text-2xl font-bold tracking-tighter ${color}`}>{value}</span>
                 </div>
@@ -492,7 +526,7 @@ function ResultView({
             </div>
           </section>
 
-          {result.range_recommendations && result.range_recommendations.length > 0 && (
+          {result.range_recommendations && result.range_recommendations.length > 0 ? (
             <section className="overflow-hidden rounded-2xl border border-outline-variant/10 bg-surface-container-low shadow-lg">
               <div className="flex items-center justify-between border-b border-outline-variant/10 bg-surface-container/30 px-7 py-5">
                 <h3 className="flex items-center gap-3 font-headline text-lg font-bold text-on-surface">
@@ -514,14 +548,14 @@ function ResultView({
                       <div className="min-w-0 flex-1">
                         <div className="mb-1 flex items-center gap-2">
                           <span className="font-mono text-sm font-bold text-primary">{rec.param}</span>
-                          {rec.value !== 'N/A' && (
+                          {rec.value !== 'N/A' ? (
                             <span className="rounded bg-surface-container px-2 py-0.5 font-mono text-xs text-on-surface-variant/60">{rec.value}</span>
-                          )}
-                          {rec.priority === 'high' && (
+                          ) : null}
+                          {rec.priority === 'high' ? (
                             <span className="rounded border border-error/20 bg-error/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-error">
-                              高优先
+                              高优先级
                             </span>
-                          )}
+                          ) : null}
                         </div>
                         <p className="text-[11px] leading-relaxed text-on-surface-variant opacity-75 transition-opacity group-hover:opacity-100">{rec.reason}</p>
                       </div>
@@ -536,7 +570,7 @@ function ResultView({
                 ))}
               </div>
             </section>
-          )}
+          ) : null}
 
           <div className="relative overflow-hidden rounded-2xl border-l-4 border-l-primary bg-surface-container-low p-7 shadow-lg">
             <h3 className="mb-5 flex items-center gap-3 font-headline text-sm font-bold text-on-surface">
@@ -560,7 +594,7 @@ function ResultView({
               </button>
             </div>
 
-            {result.sts_compatibility && (
+            {result.sts_compatibility ? (
               <div className="mt-5 border-t border-outline-variant/10 pt-5">
                 <span className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/60">STS 兼容性</span>
                 <div className="text-xs leading-relaxed text-on-surface-variant">
@@ -571,16 +605,16 @@ function ResultView({
                       <span className="text-error">存在适配问题</span>
                     )}
                   </div>
-                  {result.sts_compatibility.issues && result.sts_compatibility.issues.length > 0 && (
+                  {result.sts_compatibility.issues && result.sts_compatibility.issues.length > 0 ? (
                     <ul className="mt-2 list-disc space-y-1 pl-4">
                       {result.sts_compatibility.issues.map((issue: string, index: number) => (
                         <li key={index}>{issue}</li>
                       ))}
                     </ul>
-                  )}
+                  ) : null}
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -626,7 +660,7 @@ export function Extractor() {
   return (
     <div className="flex flex-col gap-8 animate-in slide-in-from-bottom-5 duration-500">
       <AnimatePresence mode="wait">
-        {(stage === 'idle' || stage === 'error') && (
+        {stage === 'idle' || stage === 'error' ? (
           <UploadZone
             key="upload"
             dragOver={dragOver}
@@ -639,9 +673,9 @@ export function Extractor() {
             error={error}
             onReset={reset}
           />
-        )}
+        ) : null}
 
-        {(stage === 'uploading' || stage === 'extracting') && (
+        {stage === 'uploading' || stage === 'extracting' ? (
           <div key="progress" className="grid grid-cols-1 gap-8 lg:grid-cols-12">
             <div className="lg:col-span-7">
               <ProgressView progress={progress} message={message} fileInfo={fileInfo} stage={stage} />
@@ -650,9 +684,9 @@ export function Extractor() {
               <TaskCenter tasks={tasks} activeTaskId={taskId} />
             </div>
           </div>
-        )}
+        ) : null}
 
-        {stage === 'done' && (
+        {stage === 'done' ? (
           <ResultView
             key="result"
             result={result}
@@ -663,7 +697,7 @@ export function Extractor() {
             onReset={reset}
             confidence={confidence}
           />
-        )}
+        ) : null}
       </AnimatePresence>
     </div>
   );
