@@ -366,11 +366,6 @@ export function AgentRuns() {
               <span className="text-xs font-bold uppercase tracking-[0.25em]">运行总览</span>
             </div>
             <h1 className="font-headline text-3xl font-bold text-on-surface">运行中心</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-on-surface-variant/80">
-              这里不是主操作页，而是给你排错、回看流程和发起全链路运行用的。
-              你可以查看每次 run 的阶段状态、中间产物和复核结论，也可以直接发起一条跨模块的全链路运行。
-            </p>
-
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               <div className="rounded-xl border border-outline-variant/10 bg-surface-container p-4">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/60">总记录数</div>
@@ -393,10 +388,6 @@ export function AgentRuns() {
               <span className="text-xs font-bold uppercase tracking-[0.2em]">Full Flow</span>
             </div>
             <h2 className="text-lg font-semibold text-on-surface">创建全链路运行</h2>
-            <p className="mt-2 text-sm leading-relaxed text-on-surface-variant/80">
-              这条运行会按统一 controller 串联提取、资源映射、RAG、代码生成、工程复核和工程打包。
-            </p>
-
             <div className="mt-4 space-y-3">
               <label className="block">
                 <div className="mb-1.5 text-[11px] font-semibold text-on-surface-variant/70">目标说明</div>
@@ -412,7 +403,7 @@ export function AgentRuns() {
               <label className="block">
                 <div className="mb-1.5 text-[11px] font-semibold text-on-surface-variant/70">Datasheet PDF</div>
                 <label className="flex cursor-pointer items-center justify-between rounded-xl border border-dashed border-outline-variant/20 bg-surface px-3 py-3 text-sm text-on-surface-variant">
-                  <span>{selectedFile ? selectedFile.name : '选择 PDF 后会自动上传，并直接发起 full flow。'}</span>
+                  <span>{selectedFile ? selectedFile.name : '选择 PDF'}</span>
                   <input
                     type="file"
                     accept=".pdf"
@@ -866,20 +857,6 @@ export function AgentRuns() {
         </section>
       </div>
 
-      <section className="rounded-2xl border border-outline-variant/10 bg-surface-container-low p-5 shadow-sm">
-        <SectionTitle>怎么用这个页面</SectionTitle>
-        <div className="grid gap-3 md:grid-cols-3">
-          {[
-            '如果代码生成失败，先看左侧最近记录，再点开详情判断是卡在规划、装配、编译预检还是复核阶段。',
-            '如果你想试全链路 agent 化能力，就在右上角创建全链路运行，让系统自动串联提取、映射、代码和复核。',
-            '主操作页仍然是提取器、资源映射和代码实验室，这里更像运行与排错中心。',
-          ].map(text => (
-            <div key={text} className="rounded-xl border border-outline-variant/10 bg-surface-container px-4 py-3 text-sm leading-relaxed text-on-surface-variant/80">
-              {text}
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }

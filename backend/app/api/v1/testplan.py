@@ -15,6 +15,7 @@ from datetime import datetime
 from app.services.testplan_service import TestPlanService
 from app.services.task_status_store import TaskStatusStore
 from app.services.run_store import get_run_store
+from app.services.workspace_memory_service import get_workspace_memory_service
 from app.flows.module1_extract_flow import (
     build_module1_extract_controller,
     finalize_module1_run,
@@ -30,6 +31,7 @@ router   = APIRouter()
 service  = TestPlanService()
 task_store = TaskStatusStore()
 run_store = get_run_store()
+workspace_memory = get_workspace_memory_service()
 controller = build_module1_extract_controller(service=service)
 
 # 任务状态存储（生产环境用Redis）
@@ -43,6 +45,24 @@ class TaskCancelledError(RuntimeError):
 def _find_uploaded_file(file_id: str) -> Optional[Path]:
     files = list(settings.UPLOAD_DIR.glob(f"{file_id}_*"))
     return files[0] if files else None
+
+
+def _summarize_testplan_result(file_id: str, file_name: str, data: dict) -> None:
+    statistics = data.get("statistics", {}) or {}
+    total = statistics.get("total", 0)
+    chip_name = data.get("chip_name", "")
+    chip_type = data.get("chip_type", "")
+    pin_count = data.get("pin_count", 0)
+    summary = f"{chip_name or '未命名芯片'} / {chip_type or '未知类型'} / 参数 {total} 项 / 引脚 {pin_count} 个"
+    workspace_memory.update_testplan_context(
+        {
+            "file_id": file_id,
+            "file_name": file_name,
+            "chip_name": chip_name,
+            "chip_type": chip_type,
+            "summary": summary,
+        }
+    )
 
 
 def _build_task_payload(task_id: str, file_id: str, pages: Optional[str], max_workers: int) -> dict:
@@ -223,6 +243,8 @@ async def extract_testplan(
         )
         if outcome["status"] == "success":
             data = outcome["data"] or {}
+            source_file = _find_uploaded_file(file_id)
+            _summarize_testplan_result(file_id, source_file.name if source_file else file_id, data)
             logger.info(
                 "Extraction success: %s params run=%s",
                 data.get("statistics", {}).get("total", 0),
@@ -313,6 +335,8 @@ def _run_extract_task(
             )
             run_store.save_run(run.to_dict())
             finalized_result = finalize_module1_run(run, file_id)
+            source_file = _find_uploaded_file(file_id)
+            _summarize_testplan_result(file_id, source_file.name if source_file else file_id, finalized_result)
             final_payload = {
                 "status":   "completed",
                 "progress": 100,

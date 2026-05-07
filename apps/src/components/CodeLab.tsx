@@ -444,9 +444,6 @@ export function CodeLab() {
     <div className="flex flex-col gap-6 animate-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col gap-2">
         <h1 className="font-headline text-4xl font-bold tracking-tight text-on-surface">代码实验室</h1>
-        <p className="max-w-4xl text-sm leading-relaxed text-on-surface-variant">
-          这里不再只是“一键出代码”的黑盒页面。模块三会先创建一次运行记录，再按“测试规划、代码装配、静态校验、编译预检、工程打包”的顺序输出结果和工程包。
-        </p>
       </div>
 
       {(linkedFromModule1 || m1Loading) && (
@@ -671,10 +668,7 @@ export function CodeLab() {
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <SmallTitle>运行主线</SmallTitle>
-                <h2 className="text-xl font-bold text-on-surface">这次代码生成会先创建 run，再逐步推进各阶段</h2>
-                <p className="mt-2 text-sm leading-relaxed text-on-surface-variant/75">
-                  这里优先展示运行阶段和阻断点，再展示最终代码结果。更详细的历史记录和跨次对比，请去“运行中心”查看。
-                </p>
+                <h2 className="text-xl font-bold text-on-surface">本次运行</h2>
               </div>
               <div className={`rounded-xl border px-3 py-2 text-xs font-bold ${currentRunStatus.tone}`}>{currentRunStatus.label}</div>
             </div>
@@ -748,9 +742,6 @@ export function CodeLab() {
                       </div>
                       <div>
                         <p className="mb-2 font-headline text-xl font-bold text-on-surface">等待创建本次运行</p>
-                        <p className="max-w-2xl text-sm leading-relaxed text-on-surface-variant/70">
-                          点击左下角按钮后，系统会先创建一次运行记录，再依次完成测试规划、代码装配、静态校验、编译预检和工程打包。
-                        </p>
                       </div>
                     </motion.div>
                   ) : null}

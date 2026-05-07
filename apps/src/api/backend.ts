@@ -818,3 +818,100 @@ export async function getWaveform(
   const qs = nPoints ? `?n_points=${nPoints}` : '';
   return request(`${getBaseUrl()}/diagnosis/waveform${qs}`);
 }
+
+export interface WorkspaceMemoryNote {
+  text: string;
+  updated_at: string;
+}
+
+export interface WorkspaceMemory {
+  current_chip: {
+    name: string;
+    chip_type: string;
+    updated_at: string;
+  };
+  recent_testplan: {
+    file_id: string;
+    file_name: string;
+    summary: string;
+    updated_at: string;
+  };
+  recent_resource_map: {
+    file_name: string;
+    summary: string;
+    updated_at: string;
+  };
+  recent_codegen: {
+    template: string;
+    summary: string;
+    updated_at: string;
+  };
+  recent_failure_topic: {
+    topic: string;
+    summary: string;
+    updated_at: string;
+  };
+  notes: WorkspaceMemoryNote[];
+}
+
+export type AssistantMode = 'general' | 'testplan' | 'resource-map' | 'codegen' | 'diagnosis' | 'run-analysis';
+
+export interface AssistantChatRequest {
+  message: string;
+  mode: AssistantMode;
+  run_id?: string;
+}
+
+export interface AssistantChunk {
+  source: string;
+  score: number;
+  text: string;
+}
+
+export interface AssistantChatResult {
+  mode: AssistantMode;
+  answer: string;
+  context_summary: string;
+  related_run?: AgentRunResult | null;
+  retrieved_chunks: AssistantChunk[];
+  suggested_actions: string[];
+  image_count?: number;
+  model_backend?: string;
+}
+
+export async function getWorkspaceMemory(): Promise<ApiResponse<WorkspaceMemory>> {
+  return request<WorkspaceMemory>(`${getBaseUrl()}/workspace-memory`);
+}
+
+export async function resetWorkspaceMemory(): Promise<ApiResponse<WorkspaceMemory>> {
+  return request<WorkspaceMemory>(`${getBaseUrl()}/workspace-memory/reset`, {
+    method: 'POST',
+  });
+}
+
+export async function queryEngineerAssistant(
+  payload: AssistantChatRequest,
+): Promise<ApiResponse<AssistantChatResult>> {
+  return request<AssistantChatResult>(`${getBaseUrl()}/chat/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function sendEngineerAssistantMessage(payload: {
+  message: string;
+  mode: AssistantMode;
+  run_id?: string;
+  images?: File[];
+}): Promise<ApiResponse<AssistantChatResult>> {
+  const form = new FormData();
+  form.append('message', payload.message || '');
+  form.append('mode', payload.mode);
+  if (payload.run_id) form.append('run_id', payload.run_id);
+  (payload.images || []).forEach(file => form.append('images', file));
+  return request<AssistantChatResult>(`${getBaseUrl()}/chat/message`, {
+    method: 'POST',
+    body: form,
+  });
+}

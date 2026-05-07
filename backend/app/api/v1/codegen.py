@@ -24,6 +24,7 @@ from app.services.enterprise_code_knowledge import get_enterprise_code_knowledge
 from app.services.review_service import ReviewService
 from app.services.run_store import get_run_store
 from app.services.testprogram_service import TestProgramService
+from app.services.workspace_memory_service import get_workspace_memory_service
 from app.utils.logger import setup_logger
 
 settings = get_settings()
@@ -36,6 +37,7 @@ compile_validator = CompileValidationService()
 planner = CodegenPlannerService()
 testprogram_service = TestProgramService()
 run_store = get_run_store()
+workspace_memory = get_workspace_memory_service()
 controller = build_module3_codegen_controller(
     planner=planner,
     service=service,
@@ -197,6 +199,16 @@ async def generate_code(req: CodegenRequest = Body(...)):
     try:
         http_code, outcome = run_codegen_flow(req)
         if outcome["status"] == "success":
+            result = outcome["data"] or {}
+            workspace_memory.update_codegen_context(
+                {
+                    "template": ", ".join(result.get("test_items", [])[:4]) or req.chip_type,
+                    "summary": (
+                        f"{result.get('chip_name', req.chip_name)} / {result.get('chip_type', req.chip_type)} / "
+                        f"测试项 {len(result.get('test_items', []))} 个 / 代码 {result.get('lines', 0)} 行"
+                    ),
+                }
+            )
             return success(data=outcome["data"], message=outcome["message"], code=http_code)
         return error(outcome["message"], code=http_code, data=outcome["data"])
     except Exception as exc:  # pragma: no cover - defensive route fallback

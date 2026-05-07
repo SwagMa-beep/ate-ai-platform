@@ -1,35 +1,36 @@
-# Web框架
+# Web framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
-# AI/LLM
+# AI / LLM
 openai==1.6.1
 instructor==0.4.5
 
-# PDF处理（去掉camelot）
+# PDF parsing and OCR fallback
 pymupdf==1.23.8
 pdfplumber==0.10.3
-# camelot-py[cv]==0.11.0  # ❌ 删除这行
+rapidocr_onnxruntime==1.4.4
+opencv-python==4.10.0.84
 
-# 数据处理
+# Data processing
 pandas==2.1.4
 openpyxl==3.1.2
 numpy==1.26.2
 
-# 配置管理
+# Configuration
 pydantic==2.5.0
 pydantic-settings==2.1.0
 python-multipart==0.0.6
 python-dotenv==1.0.0
 
-# 日志
+# Logging
 loguru==0.7.2
 
-# 工具
+# Utilities
 tqdm==4.66.1
 pyyaml==6.0.1
 requests==2.31.0
 
-# 测试
+# Testing
 pytest==7.4.3
 httpx==0.25.2

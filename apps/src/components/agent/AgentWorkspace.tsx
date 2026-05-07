@@ -368,7 +368,7 @@ export function AgentWorkspace() {
   return (
     <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
       <div className="space-y-6">
-        <Card title="任务输入区" subtitle="输入自然语言目标、选择执行配置，然后发起完整 Agent Flow。">
+        <Card title="任务输入区">
           <div className="space-y-4">
             <label className="block">
               <div className="mb-1.5 text-xs font-semibold text-on-surface-variant/70">任务目标</div>
@@ -383,7 +383,7 @@ export function AgentWorkspace() {
             <label className="block">
               <div className="mb-1.5 text-xs font-semibold text-on-surface-variant/70">Datasheet 上传</div>
               <label className="flex cursor-pointer items-center justify-between rounded-xl border border-dashed border-outline-variant/20 bg-surface px-3 py-3 text-sm text-on-surface-variant">
-                <span>{selectedFile ? selectedFile.name : '选择 PDF 后会自动上传，并串联启动完整 Agent Flow。'}</span>
+                <span>{selectedFile ? selectedFile.name : '选择 PDF'}</span>
                 <input
                   type="file"
                   accept=".pdf"
@@ -448,7 +448,6 @@ export function AgentWorkspace() {
 
         <Card
           title="最近运行记录"
-          subtitle="这里展示最近的 Agent 运行，可切换查看详情。"
           actions={
             <button
               type="button"
@@ -467,7 +466,6 @@ export function AgentWorkspace() {
       <div className="space-y-6">
         <Card
           title="Thinking Feed"
-          subtitle="按时间顺序展示当前 Agent Run 的实时进度、阶段切换和执行痕迹，更接近现场工作的感觉。"
         >
           <AgentThinkingFeed
             entries={thinkingFeed}
@@ -478,7 +476,6 @@ export function AgentWorkspace() {
 
         <Card
           title="Agent 执行时间线"
-          subtitle="这次运行经历了哪些步骤、卡在哪里、需要人工复核什么，都在这里展示。"
           actions={
             activeRun ? (
               <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
@@ -517,11 +514,11 @@ export function AgentWorkspace() {
           )}
         </Card>
 
-        <Card title="Artifacts 中间产物" subtitle="展示 Agent Run 过程中产生的主要中间产物，并汇总当前可直接交付的文件。">
+        <Card title="Artifacts 中间产物">
           <AgentArtifactsPanel artifacts={activeRun?.artifacts || []} run={activeRun} />
         </Card>
 
-        <Card title="ReviewAgent 工程复核" subtitle="用于查看工程风险、必须人工复核项和下一步建议。">
+        <Card title="工程复核">
           <AgentReviewPanel
             run={activeRun}
             onDecision={updatedRun => {

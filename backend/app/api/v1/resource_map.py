@@ -20,6 +20,7 @@ from app.utils.resource_map_exporter import export_resource_map_excel
 from app.models.testplan import ExtractionResult
 from app.models.resource_map import AdapterInfo, PinGroupConfig, PGSConfig, PGSDetailCondition, ResourceMapping
 from app.services.run_store import get_run_store
+from app.services.workspace_memory_service import get_workspace_memory_service
 from app.flows.module2_resource_map_flow import (
     build_module2_resource_map_controller,
     finalize_module2_run,
@@ -34,6 +35,7 @@ router   = APIRouter()
 service = ResourceMappingService()
 svg_gen = SVGGenerator()
 run_store = get_run_store()
+workspace_memory = get_workspace_memory_service()
 controller = build_module2_resource_map_controller(service=service)
 
 
@@ -168,6 +170,15 @@ async def generate_resource_map(
         out_prefix=out_prefix,
         pin_auto_loaded=len(pin_defs_raw) > 0,
         summary=summary,
+    )
+    workspace_memory.update_resource_map_context(
+        {
+            "file_name": out_prefix,
+            "summary": (
+                f"{chip_name} / {chip_type} / 适配器 {finalized.get('adapter', '')} / "
+                f"资源 {finalized.get('pgs_items', 0)} 项 / 站点 {summary.get('site_count', 1)}"
+            ),
+        }
     )
     logger.success(f"Resource mapping finished | adapter={finalized.get('adapter', '')}")
     return {

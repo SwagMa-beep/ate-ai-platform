@@ -1,14 +1,15 @@
 """
-配置管理模块
-统一管理所有配置项
+Application settings for the main ATE AI platform.
 """
-import os
-from pathlib import Path
-from functools import lru_cache
-from pydantic_settings import BaseSettings
-from pydantic import field_validator
+from __future__ import annotations
 
-# 获取项目根目录
+import os
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
+
 BASE_DIR = Path(
     os.environ.get(
         "ATE_BASE_DIR",
@@ -16,48 +17,60 @@ BASE_DIR = Path(
     )
 )
 
-class Settings(BaseSettings):
-    """项目配置"""
 
-    # ========== API配置 ==========
+class Settings(BaseSettings):
+    # Default text model
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     DEEPSEEK_MODEL: str = "deepseek-chat"
 
-    # ========== 项目信息 ==========
+    # Optional unified chat / vision overrides
+    CHAT_API_KEY: str = ""
+    CHAT_BASE_URL: str = ""
+    CHAT_MODEL: str = ""
+    VISION_API_KEY: str = ""
+    VISION_BASE_URL: str = ""
+    VISION_MODEL: str = ""
+
+    # Project metadata
     PROJECT_NAME: str = "ATE-AI-Platform"
     VERSION: str = "0.2.0"
     DEBUG: bool = True
 
-    # ========== 路径配置 ==========
+    # Paths
     DATA_DIR: Path = BASE_DIR / "data"
     UPLOAD_DIR: Path = BASE_DIR / "data" / "uploads"
     PROCESSED_DIR: Path = BASE_DIR / "data" / "processed"
     RAW_DIR: Path = BASE_DIR / "data" / "raw"
     LOG_DIR: Path = BASE_DIR / "logs"
+    WORKSPACE_MEMORY_PATH: Path = BASE_DIR / "data" / "processed" / "workspace_memory.json"
+    WORKSPACE_MEMORY_MAX_ITEMS: int = 20
 
-    # ========== PDF处理配置 ==========
+    # PDF extraction
     MAX_PAGES_PER_BATCH: int = 10
     MAX_TEXT_LENGTH: int = 6000
+    ENABLE_PDF_OCR_FALLBACK: bool = True
+    PDF_OCR_MIN_CHARS: int = 500
+    PDF_OCR_DPI: int = 200
 
-    # ========== 提取配置 ==========
+    # Extraction / generation
     MAX_WORKERS: int = 5
     TEMPERATURE: float = 0
     MAX_TOKENS: int = 8192
     CONFIDENCE_THRESHOLD: float = 0.75
 
-    # ========== STS8200S 机台配置 ==========
+    # STS8200S platform constraints
     STS8200S_VI_VOLTAGE_MAX: float = 10.0
     STS8200S_VI_CURRENT_MAX: float = 0.2
     STS8200S_DIO_CHANNELS: int = 24
     STS8200S_CBIT_CHANNELS: int = 40
 
-    # ========== 前端跨域配置 ==========
-    ALLOWED_ORIGINS: list = ["*"]
+    # Frontend / networking
+    ALLOWED_ORIGINS: list[str] = ["*"]
     CLEAR_PROXY_ENV: bool = False
     SSL_VERIFY: bool = True
 
-    # ========== 芯片类型识别配置 ==========
+    # Chip detection
     ENABLE_CHIP_TYPE_DETECTION: bool = True
     DEFAULT_CHIP_TYPE: str = "UNKNOWN"
 
@@ -69,7 +82,6 @@ class Settings(BaseSettings):
     @field_validator("DEBUG", mode="before")
     @classmethod
     def normalize_debug_value(cls, value):
-        """Accept non-boolean debug-like env values (e.g. DEBUG=release)."""
         if isinstance(value, bool):
             return value
         if value is None:
@@ -96,42 +108,35 @@ class Settings(BaseSettings):
         return [item.strip() for item in text.split(",") if item.strip()]
 
     def create_dirs(self):
-        """创建必要的目录"""
         for dir_path in [
             self.UPLOAD_DIR,
             self.PROCESSED_DIR,
             self.RAW_DIR,
-            self.LOG_DIR
+            self.LOG_DIR,
+            self.WORKSPACE_MEMORY_PATH.parent,
+            self.UPLOAD_DIR / "chat_images",
         ]:
             dir_path.mkdir(parents=True, exist_ok=True)
+
+    def get_text_api_key(self) -> str:
+        return self.CHAT_API_KEY or self.DEEPSEEK_API_KEY
+
+    def get_text_base_url(self) -> str:
+        return self.CHAT_BASE_URL or self.DEEPSEEK_BASE_URL
+
+    def get_text_model(self) -> str:
+        return self.CHAT_MODEL or self.DEEPSEEK_MODEL
+
+    def get_text_backend(self) -> str:
+        return "chat" if self.CHAT_API_KEY and self.CHAT_BASE_URL and self.CHAT_MODEL else "deepseek"
+
+    def has_vision_model(self) -> bool:
+        return bool(self.VISION_API_KEY and self.VISION_BASE_URL and self.VISION_MODEL)
 
 
 @lru_cache()
 def get_settings() -> Settings:
-    """获取配置单例"""
     return Settings()
 
 
-# 导出BASE_DIR供其他模块使用
 __all__ = ["Settings", "get_settings", "BASE_DIR"]
-
-
-# 测试代码
-if __name__ == "__main__":
-    settings = get_settings()
-    print("=" * 60)
-    print("配置信息")
-    print("=" * 60)
-    print(f"项目名称: {settings.PROJECT_NAME}")
-    print(f"版本: {settings.VERSION}")
-    print(f"调试模式: {settings.DEBUG}")
-    print(f"API密钥: {'已配置:' + settings.DEEPSEEK_API_KEY[:8] + '...' if settings.DEEPSEEK_API_KEY else '未配置'}")
-    print(f"数据目录: {settings.DATA_DIR}")
-    print(f"上传目录: {settings.UPLOAD_DIR}")
-    print(f"处理目录: {settings.PROCESSED_DIR}")
-    print(f"最大并发: {settings.MAX_WORKERS}")
-    print(f".env路径: {BASE_DIR / 'backend' / '.env'}")
-    print(f".env存在: {(BASE_DIR / 'backend' / '.env').exists()}")
-    print("=" * 60)
-    settings.create_dirs()
-    print("✅ 必要目录已创建")

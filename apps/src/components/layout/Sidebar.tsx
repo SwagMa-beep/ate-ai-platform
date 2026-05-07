@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Gauge,
+  MessageSquareDashed,
   Microscope,
   Network,
   Settings2,
@@ -23,6 +24,7 @@ const navGroups: Array<{
     title: '智能开发',
     items: [
       { label: 'ATE Agent 工作台', key: 'agent-workspace', icon: Bot },
+      { label: '工程师助手', key: 'engineer-assistant', icon: MessageSquareDashed },
       { label: 'Agent 运行中心', key: 'agent-runs', icon: Workflow },
     ],
   },
@@ -57,28 +59,20 @@ export function Sidebar({
   const expanded = !collapsed || hoverExpanded;
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
+    if (typeof window === 'undefined') return;
     const saved = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
     setCollapsed(saved === 'true');
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
+    if (typeof window === 'undefined') return;
     window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(collapsed));
   }, [collapsed]);
 
   return (
     <aside
       onMouseEnter={() => {
-        if (collapsed) {
-          setHoverExpanded(true);
-        }
+        if (collapsed) setHoverExpanded(true);
       }}
       onMouseLeave={() => setHoverExpanded(false)}
       className={`flex h-full shrink-0 flex-col border-r border-outline-variant/10 bg-surface-container-low px-4 py-5 transition-[width,padding] duration-300 ${
@@ -89,10 +83,7 @@ export function Sidebar({
         {expanded ? (
           <div className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4">
             <div className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary">ATE AI Platform</div>
-            <div className="mt-2 text-lg font-semibold text-on-surface">Agent 工作流与手动工具协同</div>
-            <p className="mt-2 text-sm leading-relaxed text-on-surface-variant/75">
-              通过 Agent 工作台串联完整开发流程，同时保留各模块页面，方便单独查看、校验和手动处理。
-            </p>
+            <div className="mt-2 text-lg font-semibold text-on-surface">Agent 工作流</div>
           </div>
         ) : (
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/15 bg-primary/6 text-primary">

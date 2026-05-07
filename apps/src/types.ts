@@ -1,5 +1,6 @@
 export type View =
   | 'agent-workspace'
+  | 'engineer-assistant'
   | 'agent-runs'
   | 'testplan'
   | 'resource-map'
@@ -13,35 +14,39 @@ export type ThemeMode = 'dark' | 'light';
 export const viewMeta: Record<View, { title: string; description: string }> = {
   'agent-workspace': {
     title: 'ATE Agent 工作台',
-    description: '自动化总入口，负责发起完整 ATE Agent 开发流程。',
+    description: '',
+  },
+  'engineer-assistant': {
+    title: '工程师助手',
+    description: '',
   },
   'agent-runs': {
     title: 'Agent 运行中心',
-    description: '查看历史运行、步骤时间线、中间产物和工程复核结果。',
+    description: '',
   },
   testplan: {
     title: 'Datasheet / TestPlan',
-    description: '手动工具模式下的数据手册提取与测试计划生成页面。',
+    description: '',
   },
   'resource-map': {
     title: 'STS8200S 资源映射',
-    description: '手动生成资源映射、BOM、PGS 与 SVG 交付件。',
+    description: '',
   },
   codegen: {
     title: 'RAG 测试代码生成',
-    description: '手动生成测试代码、工程包与辅助复核信息。',
+    description: '',
   },
   diagnosis: {
     title: '良率诊断',
-    description: '用于查看诊断结果、波形趋势和异常模式。',
+    description: '',
   },
   'knowledge-base': {
     title: '知识库管理',
-    description: '查看企业样例、RAG 资料与知识资产接入状态。',
+    description: '',
   },
   settings: {
     title: '设置',
-    description: '统一管理系统配置、运行方式和桌面端使用提示。',
+    description: '',
   },
 };
 

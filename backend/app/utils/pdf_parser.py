@@ -1,133 +1,217 @@
-"""
-PDF解析工具
-只使用 pdfplumber（更稳定）
-"""
-import pdfplumber
-from typing import List, Dict, Optional
+"""PDF parsing helpers with per-page OCR fallback."""
+
+from __future__ import annotations
+
+import re
 from pathlib import Path
+from typing import Dict, List, Optional
+
+import pdfplumber
+
 from app.core.config import get_settings
 from app.utils.logger import setup_logger
 
 settings = get_settings()
 logger = setup_logger()
 
+try:
+    import fitz
+
+    PYMUPDF_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    fitz = None
+    PYMUPDF_AVAILABLE = False
+
+try:
+    import numpy as np
+    from rapidocr_onnxruntime import RapidOCR
+
+    RAPIDOCR_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    np = None
+    RapidOCR = None
+    RAPIDOCR_AVAILABLE = False
+
 
 class PDFParser:
-    """PDF解析器"""
+    """Parse PDFs with pdfplumber first and OCR fallback for sparse pages."""
 
     def __init__(self, pdf_path: str):
-        """
-        初始化PDF解析器
-
-        Args:
-            pdf_path: PDF文件路径
-        """
         self.pdf_path = Path(pdf_path)
         if not self.pdf_path.exists():
-            raise FileNotFoundError(f"PDF文件不存在: {pdf_path}")
+            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
-        logger.info(f"加载PDF: {self.pdf_path.name}")
+        self._ocr_engine = None
+        logger.info(f"Loading PDF: {self.pdf_path.name}")
 
     def parse(self, pages: Optional[str] = None) -> List[Dict]:
-        """
-        解析PDF，提取文本和表格
-
-        Args:
-            pages: 页码范围（如 "3-9" 或 "3,4,5"）
-
-        Returns:
-            [{"page": 1, "content": "..."}, ...]
-        """
-        chunks = []
+        chunks: list[dict] = []
 
         with pdfplumber.open(self.pdf_path) as pdf:
             total_pages = len(pdf.pages)
-            logger.info(f"PDF总页数: {total_pages}")
+            logger.info(f"PDF total pages: {total_pages}")
 
-            # 确定要处理的页码
             page_indices = self._parse_page_range(pages, total_pages)
-            logger.info(f"处理页码: {len(page_indices)} 页")
+            logger.info(f"Processing pages: {len(page_indices)}")
 
             for i in page_indices:
                 page = pdf.pages[i]
+                pdf_text = self._extract_page_text_with_pdfplumber(page)
+                final_text = pdf_text
+                extract_method = "pdfplumber"
 
-                # 提取文本
-                text = page.extract_text() or ""
+                if self._should_use_ocr(pdf_text):
+                    ocr_text = self._extract_page_text_with_ocr(i)
+                    final_text, extract_method = self._select_page_text(pdf_text, ocr_text)
 
-                # 提取表格并合并到文本（使用pdfplumber的表格提取）
-                try:
-                    tables = page.extract_tables()
-                    if tables:
-                        for table in tables:
-                            for row in table:
-                                if row:
-                                    # 过滤None值
-                                    row_text = "\t".join(
-                                        [str(cell) if cell else "" for cell in row]
-                                    )
-                                    text += "\n" + row_text
-                except Exception as e:
-                    logger.warning(f"第{i + 1}页表格提取失败: {e}")
-
-                # 过滤空页
-                if len(text.strip()) < 50:
-                    logger.debug(f"跳过空页: {i + 1}")
+                if len(final_text.strip()) < 50:
+                    logger.debug(f"Skip sparse page: {i + 1}")
                     continue
 
-                # 限制文本长度
-                text_truncated = text[:settings.MAX_TEXT_LENGTH]
+                text_truncated = final_text[: settings.MAX_TEXT_LENGTH]
+                chunks.append(
+                    {
+                        "page": i + 1,
+                        "content": text_truncated,
+                        "extract_method": extract_method,
+                    }
+                )
 
-                chunks.append({
-                    "page": i + 1,
-                    "content": text_truncated
-                })
+                logger.debug(
+                    f"Page {i + 1}: chars={len(text_truncated)} method={extract_method}"
+                )
 
-                logger.debug(f"第{i + 1}页: {len(text_truncated)} 字符")
-
-        logger.success(f"共解析 {len(chunks)} 个有效页面")
+        logger.success(f"Parsed {len(chunks)} effective pages")
         return chunks
 
-    def _parse_page_range(self, pages: Optional[str], total_pages: int) -> List[int]:
-        """
-        解析页码范围
+    def _extract_page_text_with_pdfplumber(self, page) -> str:
+        text = page.extract_text() or ""
+        try:
+            tables = page.extract_tables()
+            if tables:
+                for table in tables:
+                    for row in table:
+                        if not row:
+                            continue
+                        row_text = "\t".join(str(cell) if cell else "" for cell in row)
+                        text += "\n" + row_text
+        except Exception as exc:
+            logger.warning(f"Table extraction failed on page {page.page_number}: {exc}")
+        return self._normalize_text(text)
 
-        Examples:
-            "3-9" → [2, 3, 4, 5, 6, 7, 8]  (0-indexed)
-            "3,4,5" → [2, 3, 4]
-            None → [0, 1, 2, ..., total_pages-1]
-        """
+    def _should_use_ocr(self, text: str) -> bool:
+        if not settings.ENABLE_PDF_OCR_FALLBACK:
+            return False
+        if not RAPIDOCR_AVAILABLE or not PYMUPDF_AVAILABLE:
+            return False
+        return self._effective_char_count(text) < settings.PDF_OCR_MIN_CHARS
+
+    def _effective_char_count(self, text: str) -> int:
+        cleaned = re.sub(r"\s+", "", text or "")
+        return len(cleaned)
+
+    def _extract_page_text_with_ocr(self, page_index: int) -> str:
+        engine = self._get_ocr_engine()
+        if engine is None or fitz is None or np is None:
+            return ""
+
+        doc = None
+        try:
+            doc = fitz.open(self.pdf_path)
+            page = doc.load_page(page_index)
+            matrix = fitz.Matrix(settings.PDF_OCR_DPI / 72.0, settings.PDF_OCR_DPI / 72.0)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            image = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height, pix.width, pix.n
+            )
+            result, _ = engine(image)
+            if not result:
+                return ""
+            lines = []
+            for item in result:
+                if len(item) < 2:
+                    continue
+                line = str(item[1]).strip()
+                if line:
+                    lines.append(line)
+            return self._normalize_text("\n".join(lines))
+        except Exception as exc:
+            logger.warning(f"OCR failed on page {page_index + 1}: {exc}")
+            return ""
+        finally:
+            if doc is not None:
+                doc.close()
+
+    def _get_ocr_engine(self):
+        if not RAPIDOCR_AVAILABLE:
+            return None
+        if self._ocr_engine is None:
+            self._ocr_engine = RapidOCR()
+        return self._ocr_engine
+
+    def _select_page_text(self, pdf_text: str, ocr_text: str) -> tuple[str, str]:
+        pdf_text = self._normalize_text(pdf_text)
+        ocr_text = self._normalize_text(ocr_text)
+
+        if not ocr_text:
+            return pdf_text, "pdfplumber"
+        if not pdf_text:
+            return ocr_text, "ocr"
+
+        pdf_count = self._effective_char_count(pdf_text)
+        ocr_count = self._effective_char_count(ocr_text)
+
+        if ocr_count >= pdf_count * 1.2:
+            return ocr_text, "ocr"
+
+        merged_lines: list[str] = []
+        seen: set[str] = set()
+        for source in (pdf_text, ocr_text):
+            for line in source.splitlines():
+                cleaned = line.strip()
+                if not cleaned:
+                    continue
+                key = re.sub(r"\s+", " ", cleaned)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged_lines.append(cleaned)
+        return "\n".join(merged_lines), "merged"
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        text = (text or "").replace("\x00", " ")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    @staticmethod
+    def _parse_page_range(pages: Optional[str], total_pages: int) -> List[int]:
         if not pages:
             return list(range(total_pages))
 
         try:
             if "-" in pages:
-                # 范围格式：3-9
                 start, end = map(int, pages.split("-"))
                 return list(range(start - 1, min(end, total_pages)))
-            else:
-                # 逗号分隔：3,4,5
-                page_list = [int(p.strip()) - 1 for p in pages.split(",")]
-                return [p for p in page_list if 0 <= p < total_pages]
-        except ValueError as e:
-            logger.warning(f"页码格式错误: {pages}，处理所有页面")
+            page_list = [int(p.strip()) - 1 for p in pages.split(",")]
+            return [p for p in page_list if 0 <= p < total_pages]
+        except ValueError:
+            logger.warning(f"Invalid page range '{pages}', falling back to all pages")
             return list(range(total_pages))
 
 
-# 测试代码
 if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("用法: python pdf_parser.py <PDF路径> [页码范围]")
-        sys.exit(1)
+        print("Usage: python pdf_parser.py <pdf_path> [pages]")
+        raise SystemExit(1)
 
-    pdf_path = sys.argv[1]
-    pages = sys.argv[2] if len(sys.argv) > 2 else None
-
-    parser = PDFParser(pdf_path)
-    chunks = parser.parse(pages=pages)
-
-    print(f"\n提取结果：")
-    for chunk in chunks[:3]:  # 只显示前3页
-        print(f"\n第{chunk['page']}页（前200字符）：")
-        print(chunk['content'][:200])
+    parser = PDFParser(sys.argv[1])
+    chunks = parser.parse(pages=sys.argv[2] if len(sys.argv) > 2 else None)
+    print(f"Parsed pages: {len(chunks)}")
+    for chunk in chunks[:3]:
+        print(f"\nPage {chunk['page']} ({chunk.get('extract_method')}):")
+        print(chunk["content"][:200])

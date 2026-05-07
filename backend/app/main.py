@@ -6,7 +6,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import agent_runs, codegen, diagnosis, rag, resource_map, testplan, testprogram
+from app.api.v1 import (
+    agent_runs,
+    chat,
+    codegen,
+    diagnosis,
+    rag,
+    resource_map,
+    testplan,
+    testprogram,
+    workspace_memory,
+)
 from app.core.config import BASE_DIR, get_settings
 from app.core.response import success
 from app.utils.logger import setup_logger
@@ -45,7 +55,7 @@ async def lifespan(app: FastAPI):
     if settings.DEEPSEEK_API_KEY:
         logger.info(f"OK: DeepSeek API configured: {settings.DEEPSEEK_API_KEY[:8]}...")
     else:
-        logger.warning("WARN: DeepSeek API not configured! Extraction will not work!")
+        logger.warning("WARN: DeepSeek API not configured")
         logger.warning(f"WARN: Please check .env file: {BASE_DIR / 'backend' / '.env'}")
 
     logger.info("INFO: Local access: http://localhost:8000/docs")
@@ -72,12 +82,11 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="""
-## 基于语言大模型的智能ATE测试开发平台
-
-### 模块①：TestPlan 自动提取 + AI 量程推荐
-### 模块②：资源映射与原理图辅助设计
-### 模块③：RAG 测试代码生成 + 静态/工程预校验
-### 模块④：边缘 AI 良率诊断
+## 基于大模型的智能 ATE 开发平台
+### 模块 1：Datasheet / TestPlan 自动提取
+### 模块 2：STS8200S 资源映射与原理图辅助设计
+### 模块 3：RAG 测试代码生成与工程包整理
+### 模块 4：轻量化良率诊断与工程师助手
 """,
     lifespan=lifespan,
     docs_url="/docs",
@@ -139,13 +148,15 @@ async def global_exception_handler(request: Request, exc):
     )
 
 
-app.include_router(testplan.router, prefix="/api/v1/testplan", tags=["模块① TestPlan提取"])
-app.include_router(resource_map.router, prefix="/api/v1/resource-map", tags=["模块② 资源映射"])
-app.include_router(codegen.router, prefix="/api/v1/codegen", tags=["模块③ 测试代码生成"])
+app.include_router(testplan.router, prefix="/api/v1/testplan", tags=["模块 1 - TestPlan 提取"])
+app.include_router(resource_map.router, prefix="/api/v1/resource-map", tags=["模块 2 - 资源映射"])
+app.include_router(codegen.router, prefix="/api/v1/codegen", tags=["模块 3 - 代码生成"])
 app.include_router(agent_runs.router, prefix="/api/v1/agent-runs", tags=["统一 Agent Runs"])
-app.include_router(testprogram.router, prefix="/api/v1/testprogram", tags=["模块③ 工程包生成"])
-app.include_router(rag.router, prefix="/api/v1/rag", tags=["模块③ RAG 检索增强"])
-app.include_router(diagnosis.router, prefix="/api/v1/diagnosis", tags=["模块④ 良率诊断"])
+app.include_router(testprogram.router, prefix="/api/v1/testprogram", tags=["模块 3 - 工程包导出"])
+app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG 检索增强"])
+app.include_router(diagnosis.router, prefix="/api/v1/diagnosis", tags=["模块 4 - 良率诊断"])
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["工程师助手"])
+app.include_router(workspace_memory.router, prefix="/api/v1/workspace-memory", tags=["Workspace Memory"])
 
 app.mount("/files", StaticFiles(directory=str(settings.PROCESSED_DIR)), name="files")
 
@@ -162,6 +173,7 @@ async def root():
                 "module_1": "TestPlan extraction OK",
                 "module_2": "Resource mapping OK",
                 "module_3": "AI code generation OK",
+                "engineer_assistant": "Workspace-aware copilot OK",
             },
         },
         message="服务运行正常",
@@ -180,6 +192,7 @@ async def health_check():
             "upload_exists": settings.UPLOAD_DIR.exists(),
             "allowed_origins": settings.ALLOWED_ORIGINS,
             "ssl_verify": settings.SSL_VERIFY,
+            "ocr_fallback_enabled": settings.ENABLE_PDF_OCR_FALLBACK,
         },
         message="服务健康",
     )

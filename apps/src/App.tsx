@@ -7,6 +7,9 @@ import { viewMeta } from './types';
 const AgentWorkspacePage = lazy(() =>
   import('./pages/AgentWorkspacePage').then(module => ({ default: module.AgentWorkspacePage })),
 );
+const EngineerAssistantPage = lazy(() =>
+  import('./pages/EngineerAssistantPage').then(module => ({ default: module.EngineerAssistantPage })),
+);
 const AgentRunsPage = lazy(() => import('./pages/AgentRunsPage').then(module => ({ default: module.AgentRunsPage })));
 const TestPlanPage = lazy(() => import('./pages/TestPlanPage').then(module => ({ default: module.TestPlanPage })));
 const ResourceMapPage = lazy(() =>
@@ -40,6 +43,9 @@ export default function App() {
   switch (currentView) {
     case 'agent-workspace':
       page = <AgentWorkspacePage />;
+      break;
+    case 'engineer-assistant':
+      page = <EngineerAssistantPage />;
       break;
     case 'agent-runs':
       page = <AgentRunsPage />;
