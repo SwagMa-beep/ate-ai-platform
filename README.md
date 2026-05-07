@@ -1,126 +1,126 @@
-# ATE-AI-Platform
+# ATE AI Platform
 
-面向 ATE 测试开发的 AI 辅助平台。项目围绕芯片 Datasheet 到测试开发交付物的流程，提供 PDF 参数抽取、TestPlan 导出、STS8200S 资源映射、RAG 增强测试代码生成和良率诊断等能力。
+面向 ATE 测试开发场景的工程平台。项目围绕 `Datasheet -> TestPlan -> 资源映射 -> 测试代码 -> 工程包 -> 工程复核` 主链路，提供资料提取、STS8200S 资源映射、RAG 增强代码生成、运行中心和工程复核能力。
 
-本项目适合作为半导体测试软件、工业 AI 应用、后端/全栈实习方向的作品集项目。
+当前版本已经完成这些核心升级：
 
-## 项目亮点
+- 模块一、模块二、模块三统一接入 `run / step / artifact` 模型
+- `AgentController` 支持 `should_run / retry / skipped / human_review_required`
+- `RunStore` 支持独立 run 目录和 artifact 索引
+- 运行中心支持查看跨模块运行记录、阶段状态、复核结论与产物摘要
+- 支持发起 `full_ate_development` 全链路运行
 
-- 从 Datasheet PDF 中自动抽取电气参数、绝对最大额定值、推荐工作条件和引脚定义。
-- 将抽取结果标准化导出为 Excel/JSON，方便 ATE 测试工程师复核和二次编辑。
-- 根据芯片类型和引脚信息生成 STS8200S 资源映射、PGS 配置、BOM 和辅助原理图。
-- 结合模板规则、内置 STS8200S 知识库和 RAG 检索生成 C++ 测试程序骨架。
-- 提供良率诊断演示模块，使用异常检测模型分析仿真 VI 波形并输出故障类型。
-- 支持 Web 前端和 Electron 桌面端，前后端通过 FastAPI 接口解耦。
+## 1. 项目定位
 
-## 技术栈
+这不是一个单纯的“代码生成器”，而是在现有业务模块基础上逐步升级出来的 ATE Agent Platform：
 
-| 层级 | 技术 |
-| --- | --- |
-| 后端 | Python 3.10+, FastAPI, Pydantic, Uvicorn |
-| AI/LLM | DeepSeek API, OpenAI-compatible SDK, instructor |
-| 文档处理 | PyMuPDF, pdfplumber |
-| 数据处理 | pandas, numpy, openpyxl |
-| RAG | ChromaDB 可选，内置 TF-IDF 降级检索 |
-| 诊断算法 | IsolationForest, StandardScaler，可降级为规则检测 |
-| 前端 | React 19, TypeScript, Vite, Tailwind CSS, lucide-react |
-| 桌面端 | Electron, electron-builder/electron-packager |
+- 模块一：从 Datasheet / PDF 提取芯片参数、引脚和测试场景
+- 模块二：基于提取结果生成资源映射、PGS、BOM、SVG
+- 模块三：基于测试项、企业知识库和 RAG 生成测试代码与工程包
+- 模块四：提供良率诊断与波形分析演示能力
+- 运行中心：查看运行过程、步骤状态、中间产物和复核结论
 
-## 功能模块
+## 2. 当前能力概览
 
-### 1. TestPlan 自动提取
+### 模块一：TestPlan 提取
 
-输入芯片 Datasheet PDF，系统完成文本解析、LLM 参数抽取、规则校验、参数分类和文件导出。
+- PDF 上传与页码范围提取
+- 同步提取与异步任务
+- 芯片类型、参数、引脚、测试场景识别
+- Excel / JSON 结果导出
+- 统一接入运行中心
 
-主要能力：
+### 模块二：资源映射
 
-- PDF 上传与解析
-- 同步/异步抽取任务
-- 芯片类型识别
-- A/B/C 类参数分类
-- DC/AC/LDO 测试项识别
-- STS8200S 兼容性提示
-- Excel 和 JSON 导出
+- 基于提取结果生成 STS8200S 资源映射
+- 输出 PGS、BOM、SVG、Excel
+- 统一接入运行中心
 
-### 2. 资源映射与辅助设计
+### 模块三：代码实验室
 
-基于模块一的抽取结果和 PinMapping 信息，自动生成面向 STS8200S 的资源分配。
+- 测试项推荐
+- 生成前规划 `plan`
+- 企业知识库与 RAG 增强
+- C++ 代码生成
+- 静态校验
+- 编译预检
+- 工程包导出
+- 工程复核摘要
+- 统一接入运行中心
 
-主要能力：
+### 运行中心
 
-- 数字芯片、LDO、EEPROM 等场景的适配器选择
-- DIO/FH/SH/CBIT/TMU 资源分配
-- PGS 配置生成
-- 引脚分组生成
-- BOM 和资源映射 Excel 导出
-- SVG 辅助原理图生成
+- 查看最近运行记录
+- 查看 `run / step / artifact`
+- 查看复核结论与下一步建议
+- 发起 `full_ate_development` 全链路运行
 
-### 3. TestProgram 智能生成
+## 3. Agent 化进度
 
-面向 STS8200S 平台生成 C++ 测试程序骨架，并通过 RAG 注入机台编程知识。
+### 已完成
 
-主要能力：
+- `AgentController` 已支持：
+  - 条件执行 `should_run`
+  - 重试 `max_retries`
+  - 跳过 `skipped`
+  - 人工复核 `human_review_required`
+- `RunStore` 已支持：
+  - `run.json`
+  - `steps.json`
+  - `artifacts/index.json`
+  - 单个 artifact 元数据索引
+- 模块一、模块二、模块三均已接入统一运行模型
+- 模块三已接入 `ReviewAgent`
+- 已支持 `full_ate_development` 全链路 flow
 
-- CON/FUN/VIH/VIL/VOH/VOL/ICC 等测试模板
-- LDO Dropout、Accuracy、Iq 等测试模板
-- 内置 STS8200S API 参考
-- RAG 检索增强生成
-- AI 注释润色和风险提示
-- 静态代码校验
+### 当前边界
 
-### 4. 良率诊断演示
+- 这还不是完全成熟的多智能体平台
+- 当前更准确的阶段是：
+  - 平台主链已统一 run 模型
+  - 前后端已具备运行中心与工作台
+  - 全链路 flow 已有第一版可运行骨架
 
-使用仿真 VI 波形构建边缘 AI 诊断演示，用于展示量产测试中的异常检测思路。
-
-主要能力：
-
-- VI 波形仿真
-- IsolationForest 异常检测
-- 继电器退化、热漂移、接触噪声等故障类型识别
-- 良率、FTY 和趋势预测
-- 前端实时图表展示
-
-## 项目结构
+## 4. 目录结构
 
 ```text
 ate-ai-platform/
-├── apps/                         # React + Vite + Electron 前端
-│   ├── electron/                 # Electron 主进程
+├── apps/                           # React + Vite + Electron 前端
+│   ├── electron/
 │   ├── src/
-│   │   ├── api/                  # 后端 API 客户端
-│   │   ├── components/           # 页面组件
-│   │   ├── store/                # 前端状态
-│   │   └── types.ts              # 前端类型定义
+│   │   ├── api/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── store/
+│   │   ├── utils/
+│   │   └── types.ts
 │   └── package.json
 ├── backend/
 │   ├── app/
-│   │   ├── api/v1/               # FastAPI 路由
-│   │   ├── core/                 # 配置与统一响应
-│   │   ├── models/               # Pydantic 数据模型
-│   │   ├── services/             # 核心业务逻辑
-│   │   └── utils/                # PDF/Excel/SVG/日志工具
-│   ├── tests/                    # 接口流程测试
-│   ├── cli.py                    # TestPlan 命令行提取工具
-│   └── check_env.py              # 环境检查脚本
-├── config/                       # 配置文件
+│   │   ├── api/v1/
+│   │   ├── core/
+│   │   ├── flows/
+│   │   ├── models/
+│   │   ├── services/
+│   │   └── utils/
+│   ├── tests/
+│   ├── check_env.py
+│   └── cli.py
 ├── data/
-│   ├── raw/                      # 示例 Datasheet
-│   ├── uploads/                  # 上传文件
-│   └── processed/                # 生成结果
-├── docs/                         # 项目文档
-├── logs/                         # 运行日志
-└── requirements.txt              # Python 依赖
+│   ├── uploads/
+│   └── processed/
+├── docs/
+└── requirements.txt
 ```
 
-## 快速开始
-
-### 环境要求
+## 5. 环境要求
 
 - Python 3.10+
-- Node.js 20+ 推荐
-- DeepSeek API Key
+- Node.js 20+
+- 推荐使用 Windows + PowerShell
+- 若启用 LLM / RAG 能力，需要配置模型 API Key
 
-### 1. 安装后端依赖
+## 6. 后端启动
 
 ```powershell
 git clone <your-repo-url>
@@ -128,16 +128,13 @@ cd ate-ai-platform
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
 pip install -r requirements.txt
 ```
 
-### 2. 配置后端环境变量
-
-在 `backend/.env` 中配置：
+配置 `backend/.env`：
 
 ```env
-DEEPSEEK_API_KEY=sk-your-api-key
+DEEPSEEK_API_KEY=sk-your-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 DEEPSEEK_MODEL=deepseek-chat
 DEBUG=true
@@ -150,19 +147,19 @@ cd backend
 python check_env.py
 ```
 
-### 3. 启动后端服务
+启动后端：
 
 ```powershell
 cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-启动后访问：
+可用地址：
 
-- API 文档：http://localhost:8000/docs
-- 健康检查：http://localhost:8000/health
+- OpenAPI：`http://127.0.0.1:8000/docs`
+- 健康检查：`http://127.0.0.1:8000/health`
 
-### 4. 启动前端
+## 7. 前端启动
 
 ```powershell
 cd apps
@@ -170,15 +167,11 @@ npm install
 npm run dev
 ```
 
-前端默认运行在：
+默认地址：
 
-```text
-http://localhost:3000
-```
+- 前端：`http://127.0.0.1:3000`
 
-Vite 开发服务器已配置 `/api`、`/files` 和 `/health` 代理到 `http://localhost:8000`。
-
-## 桌面端运行
+## 8. 桌面端启动
 
 开发模式：
 
@@ -187,7 +180,7 @@ cd apps
 npm run desktop:dev
 ```
 
-打包 Windows 桌面应用：
+构建桌面端：
 
 ```powershell
 cd apps
@@ -203,73 +196,99 @@ $env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-bu
 npm run desktop:installer
 ```
 
-更多说明见 `docs/desktop-app-deploy.md`。
+## 9. 常用接口
 
-## 命令行使用
+### 模块一
 
-不启动 Web 服务时，也可以直接使用 CLI 对 PDF 进行 TestPlan 抽取。
+- `POST /api/v1/testplan/upload`
+- `POST /api/v1/testplan/extract`
+- `POST /api/v1/testplan/extract-async`
+- `GET /api/v1/testplan/status/{task_id}`
+- `GET /api/v1/testplan/download/{file_id}/{file_type}`
+- `GET /api/v1/testplan/pins/{file_id}`
+
+### 模块二
+
+- `POST /api/v1/resource-map/generate`
+
+### 模块三
+
+- `POST /api/v1/codegen/generate`
+- `POST /api/v1/codegen/plan`
+
+### 运行中心
+
+- `GET /api/v1/agent-runs`
+- `GET /api/v1/agent-runs/{run_id}`
+- `GET /api/v1/agent-runs/{run_id}/artifacts`
+- `GET /api/v1/agent-runs/{run_id}/artifacts/{artifact_name}`
+- `POST /api/v1/agent-runs`
+- `POST /api/v1/agent-runs/{run_id}/approve`
+- `POST /api/v1/agent-runs/{run_id}/reject`
+
+### 其他
+
+- `GET /health`
+- `GET /api/v1/rag/status`
+- `POST /api/v1/diagnosis/run`
+
+## 10. 全链路运行说明
+
+当前已支持第一版全链路 flow：`full_ate_development`
+
+阶段包括：
+
+1. 输入解析
+2. TestPlan 提取
+3. 参数校验
+4. 资源映射
+5. RAG 检索
+6. 测试规划
+7. 代码装配
+8. 静态校验
+9. 编译预检
+10. 工程复核
+11. 工程打包
+
+这条 flow 当前更适合：
+
+- 调试
+- 架构验证
+- 演示 Agent 化主链
+
+而不是替代三个主页面的全部细粒度操作。
+
+## 11. 验证命令
+
+后端测试：
 
 ```powershell
-cd backend
-
-# 提取整个 PDF
-python cli.py --pdf ../data/raw/ADI-AD780.pdf
-
-# 指定页码范围
-python cli.py --pdf ../data/raw/ADI-AD780.pdf --pages 3-9
-
-# 设置并发数
-python cli.py --pdf ../data/raw/Renesas-HD74LS00P.pdf --workers 3
+python -m pytest backend/tests -q
 ```
 
-生成文件默认输出到 `data/processed/`。
-
-## 常用 API
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/health` | 健康检查 |
-| POST | `/api/v1/testplan/upload` | 上传 Datasheet PDF |
-| POST | `/api/v1/testplan/extract` | 同步抽取 TestPlan |
-| POST | `/api/v1/testplan/extract-async` | 提交异步抽取任务 |
-| GET | `/api/v1/testplan/status/{task_id}` | 查询异步任务状态 |
-| GET | `/api/v1/testplan/download/{file_id}/{file_type}` | 下载 Excel/JSON |
-| GET | `/api/v1/testplan/pins/{file_id}` | 查看引脚定义 |
-| POST | `/api/v1/resource-map/generate` | 生成资源映射 |
-| POST | `/api/v1/codegen/generate` | 生成 STS8200S 测试代码 |
-| GET | `/api/v1/rag/status` | 查看 RAG 索引状态 |
-| POST | `/api/v1/diagnosis/run` | 运行良率诊断 |
-
-## 典型工作流
-
-1. 上传芯片 Datasheet PDF。
-2. 选择页码范围并提交 TestPlan 抽取任务。
-3. 系统输出参数分类、引脚定义、STS8200S 兼容性提示。
-4. 下载 TestPlan Excel/JSON。
-5. 基于引脚定义生成资源映射、PGS 配置、BOM 和辅助原理图。
-6. 选择芯片类型、测试项和引脚分组，生成 STS8200S C++ 测试程序。
-7. 在良率诊断页面运行仿真诊断，查看异常事件和趋势预测。
-
-完整演示流程见 `docs/demo-workflow.md`。
-
-## 验证命令
+后端语法检查：
 
 ```powershell
-# 后端单元测试
-python -m pytest backend/tests -q
-
-# 后端语法检查
 python -m compileall -q backend/app
+```
 
-# 前端生产构建
+前端构建：
+
+```powershell
 cd apps
 npm run build
 ```
 
+## 12. 重要说明
 
-## 注意事项
+- 自动生成的测试代码、资源映射和工程包，必须由 ATE 工程师复核后再上机使用
+- `review_summary` 与运行中心中的复核结论属于辅助判断，不是最终放行依据
+- `data/uploads/`、`data/processed/`、`logs/` 为运行产物目录，不建议将生成结果直接提交入库
+- 若未配置 RAG / 模型能力，部分步骤会降级执行，但平台仍可输出基础结果
 
-- LLM 抽取和 RAG 增强生成依赖 DeepSeek API Key；未配置时相关 AI 能力不可用。
-- 自动生成的测试代码和资源映射应由 ATE 工程师复核后再上机使用。
-- `data/uploads/`、`data/processed/` 和 `logs/` 属于运行产物目录，不建议提交生成文件。
-- 当前 RAG 支持 ChromaDB 向量库；未安装 ChromaDB 时会自动降级为 TF-IDF 检索。
+## 13. 相关文档
+
+- [模块三 Agent 化一期说明](docs/phase2-run-model-completion.md)
+- [Agent Controller 实施方案](docs/agent-controller-implementation-plan.md)
+- [Agent Run 产物结构说明](docs/agent-run-artifacts.md)
+- [全链路 Flow 说明](docs/full-ate-development-flow.md)
